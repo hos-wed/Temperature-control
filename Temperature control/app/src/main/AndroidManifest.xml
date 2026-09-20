@@ -14,7 +14,7 @@
         android:label="Temperature control"
         android:roundIcon="@mipmap/ic_launcher"
         android:supportsRtl="true"
-        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
         <activity
             android:name="com.example.flydigicooler.MainActivity"
             android:exported="true">
