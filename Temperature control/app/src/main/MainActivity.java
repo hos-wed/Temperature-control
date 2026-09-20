@@ -33,7 +33,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
 
-public class MainActivity extends Activity implements MainActivity.OnCoolerActionListener {
+public class MainActivity extends Activity {
 
     private DashboardView dashboardView;
     private BluetoothAdapter bluetoothAdapter;
@@ -45,21 +45,6 @@ public class MainActivity extends Activity implements MainActivity.OnCoolerActio
     private static final UUID TARGET_SERVICE_UUID = UUID.fromString("0000ffe0-0000-1000-8000-00805f9b34fb");
     private static final UUID TARGET_CHAR_UUID = UUID.fromString("0000ffe1-0000-1000-8000-00805f9b34fb");
     private static final UUID CCCD_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
-
-    public interface OnCoolerActionListener {
-        void onScanRequested();
-        void onLevelChanged(int level);
-    }
-
-    @Override
-    public void onScanRequested() {
-        startCoolerScan();
-    }
-
-    @Override
-    public void onLevelChanged(int level) {
-        sendCommandToCooler(level);
-    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -75,7 +60,7 @@ public class MainActivity extends Activity implements MainActivity.OnCoolerActio
             });
         });
 
-        dashboardView = new DashboardView(this, this);
+        dashboardView = new DashboardView(this);
         setContentView(dashboardView);
 
         initBleAndRequestPermissions();
@@ -336,7 +321,7 @@ public class MainActivity extends Activity implements MainActivity.OnCoolerActio
         mainHandler.removeCallbacksAndMessages(null);
     }
 
-    public static class DashboardView extends View {
+    public class DashboardView extends View {
         public float actualColdPlateTemp = 24.5f;
         public int fanRpm = 5400;
         public int currentLevel = 3;
@@ -354,15 +339,13 @@ public class MainActivity extends Activity implements MainActivity.OnCoolerActio
         public int rgbGreen = 160;
         public int rgbBlue = 233;
 
-        private final OnCoolerActionListener actionListener;
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Vibrator vibrator;
 
-        public DashboardView(Context context, OnCoolerActionListener listener) {
+        public DashboardView(Context context) {
             super(context);
             setClickable(true);
-            this.actionListener = listener;
             vibrator = (Vibrator) context.getSystemService(Context.VIBRATOR_SERVICE);
         }
 
@@ -828,9 +811,7 @@ public class MainActivity extends Activity implements MainActivity.OnCoolerActio
 
                     if (retryBtn.contains(event.getX(), event.getY())) {
                         triggerHaptic(false);
-                        if (actionListener != null) {
-                            actionListener.onScanRequested();
-                        }
+                        startCoolerScan();
                         return true;
                     }
                 }
@@ -980,9 +961,7 @@ public class MainActivity extends Activity implements MainActivity.OnCoolerActio
                     int[] rpms = {0, 2500, 3800, 5400, 7200, 4200};
                     fanRpm = rpms[currentLevel];
 
-                    if (actionListener != null) {
-                        actionListener.onLevelChanged(currentLevel);
-                    }
+                    sendCommandToCooler(currentLevel);
 
                     postInvalidate();
                 }
