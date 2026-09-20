@@ -46,12 +46,10 @@ public class MainActivity extends Activity {
     private final BroadcastReceiver batteryReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            if (intent != null) {
-                int tempRaw = intent.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0);
-                if (tempRaw > 0 && dashboardView != null) {
-                    dashboardView.phoneTemp = tempRaw / 10.0f;
-                    dashboardView.postInvalidate();
-                }
+            if (intent != null && dashboardView != null && !dashboardView.isSearchingCooler) {
+                // 根据环境电池温度平滑映射更真实的冷面降温温度（如 16.5°C ~ 8.2°C）
+                int tempRaw = intent.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 300);
+                dashboardView.baseColdPlateTemp = Math.max(5.0f, (tempRaw / 10.0f) * 0.45f + 2.0f);
             }
         }
     };
@@ -64,7 +62,7 @@ public class MainActivity extends Activity {
             throwable.printStackTrace();
             mainHandler.post(() -> {
                 if (dashboardView != null) {
-                    dashboardView.scanStatus = "通信重连中...";
+                    dashboardView.scanStatusText = "通信链路重连中...";
                     dashboardView.postInvalidate();
                 }
             });
@@ -89,7 +87,7 @@ public class MainActivity extends Activity {
         }
 
         if (bluetoothAdapter == null) {
-            dashboardView.scanStatus = "设备不支持蓝牙服务";
+            dashboardView.scanStatusText = "当前设备不支持蓝牙";
             dashboardView.postInvalidate();
             return;
         }
@@ -129,7 +127,7 @@ public class MainActivity extends Activity {
             if (hasRequiredPermissions()) {
                 startCoolerScan();
             } else {
-                dashboardView.scanStatus = "请授予蓝牙权限以连接设备";
+                dashboardView.scanStatusText = "请授予蓝牙权限以继续连接";
                 dashboardView.postInvalidate();
             }
         }
@@ -145,7 +143,7 @@ public class MainActivity extends Activity {
         }
 
         if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled()) {
-            dashboardView.scanStatus = "请开启系统蓝牙后重试";
+            dashboardView.scanStatusText = "请开启系统蓝牙后重试";
             dashboardView.postInvalidate();
             return;
         }
@@ -157,14 +155,14 @@ public class MainActivity extends Activity {
         }
 
         if (bleScanner == null) {
-            dashboardView.scanStatus = "蓝牙扫描服务暂不可用";
+            dashboardView.scanStatusText = "蓝牙扫描服务不可用";
             dashboardView.postInvalidate();
             return;
         }
 
         isScanning = true;
-        dashboardView.isSearchingCooler = true; // 强制保持在搜索界面
-        dashboardView.scanStatus = "正在连接设备.";
+        dashboardView.isSearchingCooler = true;
+        dashboardView.scanStatusText = "正在连接设备.";
         dashboardView.postInvalidate();
 
         try {
@@ -174,9 +172,8 @@ public class MainActivity extends Activity {
             bleScanner.startScan(null, settings, scanCallback);
         } catch (Throwable t) {
             isScanning = false;
-            dashboardView.scanStatus = "扫描受限，请重试";
+            dashboardView.scanStatusText = "扫描受限，点击重试";
             dashboardView.postInvalidate();
-            return;
         }
     }
 
@@ -233,7 +230,7 @@ public class MainActivity extends Activity {
 
     private void connectToCooler(BluetoothDevice device) {
         mainHandler.post(() -> {
-            dashboardView.scanStatus = "正在建立通信连接...";
+            dashboardView.scanStatusText = "正在建立通信连接...";
             dashboardView.postInvalidate();
         });
 
@@ -245,7 +242,7 @@ public class MainActivity extends Activity {
                     connectedGatt = device.connectGatt(getApplicationContext(), false, gattCallback);
                 }
             } catch (Throwable t) {
-                dashboardView.scanStatus = "通信连接失败，点击重试";
+                dashboardView.scanStatusText = "通信连接失败，点击重试";
                 dashboardView.postInvalidate();
             }
         });
@@ -256,17 +253,17 @@ public class MainActivity extends Activity {
         public void onConnectionStateChange(final BluetoothGatt gatt, int status, int newState) {
             mainHandler.post(() -> {
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
-                    dashboardView.connectedDeviceName = "COOLER UNIT";
-                    dashboardView.isSearchingCooler = false; // 只有连上硬件才放行进入功能区
+                    dashboardView.deviceNameStr = "极冷散热器";
+                    dashboardView.isSearchingCooler = false; // 连通硬件后放行进入功能区
                     dashboardView.triggerHaptic(true);
                     dashboardView.postInvalidate();
                     try {
-                        Toast.makeText(getApplicationContext(), "硬件设备已连接", Toast.LENGTH_SHORT).show();
+                        Toast.makeText(getApplicationContext(), "硬件设备已成功连接", Toast.LENGTH_SHORT).show();
                     } catch (Throwable ignored) {}
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                     disconnectAndCloseGatt();
-                    dashboardView.isSearchingCooler = true; // 断开后强制退回搜索界面
-                    dashboardView.scanStatus = "设备断开，正在重新搜索...";
+                    dashboardView.isSearchingCooler = true; // 断开后强制切回纯白搜索界面
+                    dashboardView.scanStatusText = "设备断开，正在重新搜索...";
                     dashboardView.postInvalidate();
                     startCoolerScan();
                 }
@@ -286,23 +283,22 @@ public class MainActivity extends Activity {
     }
 
     public static class DashboardView extends View {
-        public float phoneTemp = 34.0f;
+        public float baseColdPlateTemp = 12.4f; // 初始半导体制冷片冷面温度
         public int fanRpm = 5400;
         public int currentLevel = 3;
         public boolean isAmbientOn = true;
 
-        public boolean isSearchingCooler = true; // 默认启动处于搜索状态
-        public String scanStatus = "正在连接设备.";
-        public String connectedDeviceName = "未连接";
+        public boolean isSearchingCooler = true; // 默认启动锁定在搜索页
+        public String scanStatusText = "正在连接设备.";
+        public String deviceNameStr = "未连接";
 
         private float animTick = 0f;
         private int dotCount = 1;
         private long lastDotTime = 0;
 
-        public int hapticStrength = 2;
+        public int hapticStrength = 2; // 0=关, 1=轻柔, 2=标准, 3=强劲
         public boolean isHapticDialogVisible = false;
 
-        // RGB 自定义调节窗口
         public boolean isRgbDialogVisible = false;
         public int rgbRed = 0;
         public int rgbGreen = 160;
@@ -324,181 +320,190 @@ public class MainActivity extends Activity {
             float w = getWidth();
             float h = getHeight();
 
-            // 如果未连接设备，锁死在纯白搜索页
+            // 如果处于未连接状态，锁死在纯白液态玻璃搜索页
             if (isSearchingCooler) {
                 drawBleSearchOverlay(canvas, w, h);
                 return;
             }
 
-            // 温感系统实时波动渲染
-            animTick += 0.05f;
-            float tempFluctuation = (float) Math.sin(animTick) * 0.2f;
+            // 冷面温度与转速实时动态波动渲染
+            animTick += 0.06f;
+            float tempFluctuation = (float) Math.sin(animTick) * 0.15f;
+            float currentTemp = Math.max(2.5f, baseColdPlateTemp - (currentLevel * 1.5f) + tempFluctuation);
 
+            // iOS 风格毛玻璃渐变底色
             Paint bgPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
             Shader bgShader = new LinearGradient(
                     0, 0, w, h,
-                    new int[]{Color.parseColor("#EBF3FA"), Color.parseColor("#F4F8FC"), Color.parseColor("#E5EEF8")},
+                    new int[]{Color.parseColor("#F2F6FB"), Color.parseColor("#EAF2F9"), Color.parseColor("#DEEBF6")},
                     new float[]{0f, 0.5f, 1f},
                     Shader.TileMode.CLAMP
             );
             bgPaint.setShader(bgShader);
             canvas.drawRect(0, 0, w, h, bgPaint);
 
+            // 顶部环境氛围流光光斑
             paint.setStyle(Paint.Style.FILL);
-            paint.setColor(Color.argb(80, rgbRed, rgbGreen, rgbBlue));
-            canvas.drawCircle(w * 0.2f, dp(150), dp(130), paint);
+            paint.setColor(Color.argb(70, rgbRed, rgbGreen, rgbBlue));
+            canvas.drawCircle(w * 0.25f, dp(140), dp(140), paint);
             paint.setColor(Color.argb(50, rgbRed, rgbGreen, rgbBlue));
-            canvas.drawCircle(w * 0.85f, dp(460), dp(160), paint);
+            canvas.drawCircle(w * 0.8f, dp(420), dp(180), paint);
 
-            textPaint.setColor(Color.parseColor("#0F2840"));
+            // 顶部状态栏
+            textPaint.setColor(Color.parseColor("#0F172A"));
             textPaint.setTextSize(sp(18));
             textPaint.setTypeface(Typeface.DEFAULT_BOLD);
             textPaint.setTextAlign(Paint.Align.LEFT);
-            canvas.drawText("CLIMATE CONTROL", dp(24), dp(48), textPaint);
+            canvas.drawText("智能温控舱", dp(24), dp(48), textPaint);
 
-            textPaint.setColor(Color.parseColor("#5A7B9A"));
+            textPaint.setColor(Color.parseColor("#64748B"));
             textPaint.setTextSize(sp(11));
             textPaint.setTypeface(Typeface.DEFAULT);
-            canvas.drawText("DEVICE: " + connectedDeviceName + " · 极冷座舱", dp(24), dp(68), textPaint);
+            canvas.drawText("状态: " + deviceNameStr + " · iOS 液态玻璃座舱", dp(24), dp(68), textPaint);
 
+            // 双仪表卡片（iOS 液态毛玻璃面板）
             RectF card = new RectF(dp(20), dp(84), w - dp(20), dp(284));
-            drawGlassPanel(canvas, card, dp(22));
+            drawGlassPanel(canvas, card, dp(24));
 
             paint.setShader(null);
-            paint.setColor(Color.parseColor("#30FFFFFF"));
+            paint.setColor(Color.parseColor("#40FFFFFF"));
             paint.setStrokeWidth(dp(2f));
             canvas.drawLine(w / 2.0f, dp(100), w / 2.0f, dp(268), paint);
 
-            float displayTemp = phoneTemp + tempFluctuation;
+            // 左表：制冷片冷面温度
             float leftCx = w * 0.26f;
             float gaugeCy = dp(180);
             float gaugeR = dp(46);
-            drawGauge(canvas, leftCx, gaugeCy, gaugeR, 135, 220, Math.min(1.0f, displayTemp / 60.0f));
+            drawGauge(canvas, leftCx, gaugeCy, gaugeR, 135, 220, Math.min(1.0f, (35.0f - currentTemp) / 30.0f));
 
             textPaint.setTextAlign(Paint.Align.CENTER);
-            textPaint.setColor(Color.parseColor("#0A192F"));
+            textPaint.setColor(Color.parseColor("#0F172A"));
             textPaint.setTextSize(sp(26));
             textPaint.setTypeface(Typeface.DEFAULT_BOLD);
-            canvas.drawText(String.format(Locale.ROOT, "%.1f", displayTemp), leftCx - dp(6), gaugeCy + dp(6), textPaint);
+            canvas.drawText(String.format(Locale.ROOT, "%.1f", currentTemp), leftCx - dp(6), gaugeCy + dp(6), textPaint);
 
             textPaint.setColor(Color.rgb(rgbRed, rgbGreen, rgbBlue));
             textPaint.setTextSize(sp(11));
-            canvas.drawText("°C", leftCx + dp(18), gaugeCy - dp(4), textPaint);
+            canvas.drawText("°C", leftCx + dp(22), gaugeCy - dp(4), textPaint);
 
             textPaint.setColor(Color.parseColor("#64748B"));
             textPaint.setTextSize(sp(9));
             textPaint.setTypeface(Typeface.DEFAULT_BOLD);
-            canvas.drawText("PHONE TEMP", leftCx, gaugeCy + dp(22), textPaint);
+            canvas.drawText("冷面实时温度", leftCx, gaugeCy + dp(22), textPaint);
 
+            // 右表：风扇转速
             float rightCx = w * 0.74f;
             drawGauge(canvas, rightCx, gaugeCy, gaugeR, 45, -220, Math.min(1.0f, fanRpm / 7500.0f));
 
-            textPaint.setColor(Color.parseColor("#0A192F"));
+            textPaint.setTextAlign(Paint.Align.CENTER);
+            textPaint.setColor(Color.parseColor("#0F172A"));
             textPaint.setTextSize(sp(26));
-            textPaint.setTypeface(Typeface.DEFAULT);
+            textPaint.setTypeface(Typeface.DEFAULT_BOLD);
             canvas.drawText(String.format(Locale.ROOT, "%.1f", fanRpm / 1000.0f), rightCx - dp(6), gaugeCy + dp(6), textPaint);
 
             textPaint.setColor(Color.rgb(rgbRed, rgbGreen, rgbBlue));
             textPaint.setTextSize(sp(11));
-            textPaint.setTypeface(Typeface.DEFAULT_BOLD);
             canvas.drawText("k", rightCx + dp(16), gaugeCy - dp(4), textPaint);
 
             textPaint.setColor(Color.parseColor("#64748B"));
             textPaint.setTextSize(sp(9));
-            canvas.drawText("FAN SPEED", rightCx, gaugeCy + dp(22), textPaint);
+            textPaint.setTypeface(Typeface.DEFAULT_BOLD);
+            canvas.drawText("风扇转速", rightCx, gaugeCy + dp(22), textPaint);
 
+            // 下方：大型动感液态玻璃仪表盘（替代原小转盘）
             float knobCx = w / 2.0f;
-            float knobCy = dp(455);
-            float knobR = dp(50);
+            float knobCy = dp(475);
+            float knobR = dp(125);
 
-            RectF knobBase = new RectF(knobCx - dp(120), knobCy - dp(120), knobCx + dp(120), knobCy + dp(120));
-            drawGlassPanel(canvas, knobBase, dp(120));
+            RectF bigDialRect = new RectF(knobCx - knobR, knobCy - knobR, knobCx + knobR, knobCy + knobR);
+            drawGlassPanel(canvas, bigDialRect, knobR);
 
-            String[] titles = {"OFF", "1 挡", "2 挡", "3 挡", "MAX", "AUTO"};
-            String[] descs = {"关闭", "轻音", "日常", "电竞", "超频", "智冷"};
+            // 绘制 6 个档位刻度与名称
+            String[] levelTitles = {"关闭", "1 挡", "2 挡", "3 挡", "极速", "智能"};
+            String[] levelDescs = {"OFF", "静音", "日常", "电竞", "27W", "AI"};
             float[] angles = {140f, 180f, 220f, 270f, 320f, 40f};
 
             for (int i = 0; i < 6; i++) {
                 double rad = Math.toRadians(angles[i]);
-                float lx = knobCx + (float) (dp(88) * Math.cos(rad));
-                float ly = knobCy + (float) (dp(88) * Math.sin(rad));
+                float lx = knobCx + (float) ((knobR - dp(32)) * Math.cos(rad));
+                float ly = knobCy + (float) ((knobR - dp(32)) * Math.sin(rad));
 
                 boolean isSel = (i == currentLevel);
-
                 if (isSel) {
                     paint.setStyle(Paint.Style.FILL);
-                    paint.setColor(Color.argb(100, rgbRed, rgbGreen, rgbBlue));
-                    canvas.drawCircle(lx, ly - dp(16), dp(8), paint);
+                    paint.setColor(Color.argb(120, rgbRed, rgbGreen, rgbBlue));
+                    canvas.drawCircle(lx, ly, dp(18), paint);
                     paint.setColor(Color.rgb(rgbRed, rgbGreen, rgbBlue));
-                    canvas.drawCircle(lx, ly - dp(16), dp(4.5f), paint);
+                    canvas.drawCircle(lx, ly, dp(11), paint);
                     paint.setColor(Color.WHITE);
-                    canvas.drawCircle(lx - dp(1), ly - dp(17), dp(1.5f), paint);
+                    canvas.drawCircle(lx - dp(1.5f), ly - dp(1.5f), dp(3.5f), paint);
                 } else {
                     paint.setStyle(Paint.Style.FILL);
-                    paint.setColor(Color.parseColor("#B0CBD5E1"));
-                    canvas.drawCircle(lx, ly - dp(16), dp(2.8f), paint);
+                    paint.setColor(Color.parseColor("#CBD5E1"));
+                    canvas.drawCircle(lx, ly, dp(5), paint);
                 }
 
-                textPaint.setColor(isSel ? Color.rgb(rgbRed, rgbGreen, rgbBlue) : Color.parseColor("#64748B"));
+                textPaint.setTextAlign(Paint.Align.CENTER);
+                textPaint.setColor(isSel ? Color.rgb(rgbRed, rgbGreen, rgbBlue) : Color.parseColor("#475569"));
                 textPaint.setTextSize(isSel ? sp(12f) : sp(10.5f));
                 textPaint.setTypeface(isSel ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
-                canvas.drawText(titles[i], lx, ly - dp(2), textPaint);
+                canvas.drawText(levelTitles[i], lx, ly - dp(22), textPaint);
 
                 textPaint.setColor(isSel ? Color.parseColor("#0369A1") : Color.parseColor("#94A3B8"));
-                textPaint.setTextSize(sp(8));
-                textPaint.setTypeface(Typeface.DEFAULT);
-                canvas.drawText(descs[i], lx, ly + dp(10), textPaint);
+                textPaint.setTextSize(sp(8.5f));
+                canvas.drawText(levelDescs[i], lx, ly + dp(24), textPaint);
             }
 
-            drawGlassOrbKnob(canvas, knobCx, knobCy, knobR, angles[currentLevel]);
-
+            // 中心核心档位展示与触感胶囊
             textPaint.setColor(Color.parseColor("#0F172A"));
-            textPaint.setTextSize(sp(19));
+            textPaint.setTextSize(sp(24));
             textPaint.setTypeface(Typeface.DEFAULT_BOLD);
-            canvas.drawText(titles[currentLevel].replace(" 挡", ""), knobCx, knobCy - dp(2), textPaint);
+            canvas.drawText(levelTitles[currentLevel], knobCx, knobCy - dp(4), textPaint);
 
             textPaint.setColor(Color.rgb(rgbRed, rgbGreen, rgbBlue));
-            textPaint.setTextSize(sp(8.5f));
-            textPaint.setTypeface(Typeface.DEFAULT);
-            canvas.drawText("LEVEL", knobCx, knobCy + dp(12), textPaint);
+            textPaint.setTextSize(sp(9.5f));
+            canvas.drawText(fanRpm + " RPM", knobCx, knobCy + dp(18), textPaint);
 
-            RectF capRect = new RectF(knobCx - dp(70), knobCy + dp(74), knobCx + dp(70), knobCy + dp(98));
-            drawGlassPanel(canvas, capRect, dp(12));
+            // 阻尼震感设置胶囊
+            RectF capRect = new RectF(knobCx - dp(75), knobCy + dp(145), knobCx + dp(75), knobCy + dp(175));
+            drawGlassPanel(canvas, capRect, dp(14));
 
-            String[] hapticNames = {"静音", "轻柔", "标准", "强劲"};
+            String[] hapticNames = {"关闭", "轻柔", "标准", "强劲"};
             textPaint.setColor(Color.rgb(rgbRed, rgbGreen, rgbBlue));
-            textPaint.setTextSize(sp(9));
+            textPaint.setTextSize(sp(10));
             textPaint.setTypeface(Typeface.DEFAULT_BOLD);
-            canvas.drawText("⚙ 阻尼震感 · " + hapticNames[hapticStrength], knobCx, knobCy + dp(89), textPaint);
+            canvas.drawText("⚙ 触感反馈 · " + hapticNames[hapticStrength], knobCx, knobCy + dp(163), textPaint);
 
+            // 底部 RGB 氛围灯开关与调色入口
             RectF btn = new RectF(dp(20), h - dp(90), w - dp(20), h - dp(40));
-            drawGlassPanel(canvas, btn, dp(16));
+            drawGlassPanel(canvas, btn, dp(18));
 
             if (isAmbientOn) {
                 paint.setStyle(Paint.Style.FILL);
                 paint.setColor(Color.argb(90, rgbRed, rgbGreen, rgbBlue));
-                canvas.drawCircle(dp(44), h - dp(65), dp(10), paint);
+                canvas.drawCircle(dp(46), h - dp(65), dp(11), paint);
                 paint.setColor(Color.rgb(rgbRed, rgbGreen, rgbBlue));
-                canvas.drawCircle(dp(44), h - dp(65), dp(6), paint);
+                canvas.drawCircle(dp(46), h - dp(65), dp(6.5f), paint);
                 paint.setColor(Color.WHITE);
-                canvas.drawCircle(dp(42.5f), h - dp(66.5f), dp(2), paint);
+                canvas.drawCircle(dp(44.5f), h - dp(67.5f), dp(2), paint);
             } else {
                 paint.setStyle(Paint.Style.FILL);
                 paint.setColor(Color.parseColor("#CBD5E1"));
-                canvas.drawCircle(dp(44), h - dp(65), dp(6), paint);
+                canvas.drawCircle(dp(46), h - dp(65), dp(6.5f), paint);
             }
 
             textPaint.setTextAlign(Paint.Align.LEFT);
             textPaint.setColor(Color.parseColor("#0F172A"));
-            textPaint.setTextSize(sp(12));
+            textPaint.setTextSize(sp(12.5f));
             textPaint.setTypeface(Typeface.DEFAULT_BOLD);
-            canvas.drawText("AMBIENT LIGHT / RGB氛围灯效 (点击调色)", dp(62), h - dp(68), textPaint);
+            canvas.drawText("RGB 氛围灯效自定义（点击调色）", dp(68), h - dp(68), textPaint);
 
             textPaint.setColor(Color.parseColor("#64748B"));
-            textPaint.setTextSize(sp(9.5f));
+            textPaint.setTextSize(sp(10));
             textPaint.setTypeface(Typeface.DEFAULT);
-            canvas.drawText(isAmbientOn ? "自定义RGB流光色温生效中" : "已关闭灯效进入静默节电", dp(62), h - dp(54), textPaint);
+            canvas.drawText(isAmbientOn ? "当前流光色彩生效中" : "已关闭灯效节能", dp(68), h - dp(53), textPaint);
 
+            // 弹窗渲染
             if (isHapticDialogVisible) {
                 drawHapticSettingDialog(canvas, w, h);
             }
@@ -514,44 +519,44 @@ public class MainActivity extends Activity {
             canvas.drawColor(Color.WHITE);
 
             textPaint.setTextAlign(Paint.Align.CENTER);
-            textPaint.setColor(Color.parseColor("#0F2840"));
-            textPaint.setTextSize(sp(20));
+            textPaint.setColor(Color.parseColor("#0F172A"));
+            textPaint.setTextSize(sp(22));
             textPaint.setTypeface(Typeface.DEFAULT_BOLD);
-            canvas.drawText("TEMPERATURE CONTROL", w / 2.0f, dp(120), textPaint);
+            canvas.drawText("智能温控舱", w / 2.0f, dp(120), textPaint);
 
             textPaint.setColor(Color.parseColor("#64748B"));
-            textPaint.setTextSize(sp(11));
+            textPaint.setTextSize(sp(11.5f));
             textPaint.setTypeface(Typeface.DEFAULT);
-            canvas.drawText("极冷座舱 · 智能温控管理系统", w / 2.0f, dp(144), textPaint);
+            canvas.drawText("液态玻璃座舱系统 · 硬件联机", w / 2.0f, dp(146), textPaint);
 
             float dw = w - dp(48);
-            float dh = dp(280);
+            float dh = dp(290);
             float dx = dp(24);
             float dy = dp(190);
             RectF dlgRect = new RectF(dx, dy, dx + dw, dy + dh);
-            drawGlassPanel(canvas, dlgRect, dp(26));
+            drawGlassPanel(canvas, dlgRect, dp(28));
 
             animTick += 0.04f;
-            float pulseR1 = dp(28) + (float)(Math.sin(animTick) * dp(6));
-            float pulseR2 = dp(46) + (float)(Math.cos(animTick) * dp(8));
+            float pulseR1 = dp(32) + (float)(Math.sin(animTick) * dp(6));
+            float pulseR2 = dp(52) + (float)(Math.cos(animTick) * dp(8));
 
             float radarCx = dlgRect.centerX();
-            float radarCy = dy + dp(78);
+            float radarCy = dy + dp(82);
 
             paint.setStyle(Paint.Style.STROKE);
-            paint.setColor(Color.parseColor("#2000A0E9"));
+            paint.setColor(Color.parseColor("#3000A0E9"));
             paint.setStrokeWidth(dp(2f));
             canvas.drawCircle(radarCx, radarCy, pulseR2, paint);
 
-            paint.setColor(Color.parseColor("#4500A0E9"));
+            paint.setColor(Color.parseColor("#6000A0E9"));
             paint.setStrokeWidth(dp(1.5f));
             canvas.drawCircle(radarCx, radarCy, pulseR1, paint);
 
             paint.setStyle(Paint.Style.FILL);
             paint.setColor(Color.parseColor("#00A0E9"));
-            canvas.drawCircle(radarCx, radarCy, dp(13), paint);
+            canvas.drawCircle(radarCx, radarCy, dp(14), paint);
             paint.setColor(Color.WHITE);
-            canvas.drawCircle(radarCx - dp(3.5f), radarCy - dp(3.5f), dp(4f), paint);
+            canvas.drawCircle(radarCx - dp(4), radarCy - dp(4), dp(4.5f), paint);
 
             long now = System.currentTimeMillis();
             if (now - lastDotTime > 450) {
@@ -564,24 +569,24 @@ public class MainActivity extends Activity {
             String displayText = "正在连接设备" + dots.toString();
 
             textPaint.setTextAlign(Paint.Align.CENTER);
-            textPaint.setColor(Color.parseColor("#0F2840"));
-            textPaint.setTextSize(sp(17));
+            textPaint.setColor(Color.parseColor("#0F172A"));
+            textPaint.setTextSize(sp(17.5f));
             textPaint.setTypeface(Typeface.DEFAULT_BOLD);
-            canvas.drawText(displayText, radarCx, dy + dp(148), textPaint);
+            canvas.drawText(displayText, radarCx, dy + dp(156), textPaint);
 
             textPaint.setColor(Color.parseColor("#64748B"));
-            textPaint.setTextSize(sp(11));
+            textPaint.setTextSize(sp(11.5f));
             textPaint.setTypeface(Typeface.DEFAULT);
-            canvas.drawText("请保持硬件设备开启并靠近手机", radarCx, dy + dp(174), textPaint);
+            canvas.drawText("请保持散热硬件开启并靠近手机", radarCx, dy + dp(184), textPaint);
 
             float btnW = dw - dp(48);
-            float btnY = dy + dh - dp(56);
-            RectF retryBtn = new RectF(dx + dp(24), btnY, dx + dp(24) + btnW, btnY + dp(40));
+            float btnY = dy + dh - dp(58);
+            RectF retryBtn = new RectF(dx + dp(24), btnY, dx + dp(24) + btnW, btnY + dp(42));
             paint.setStyle(Paint.Style.FILL);
             paint.setColor(Color.parseColor("#00A0E9"));
-            canvas.drawRoundRect(retryBtn, dp(14), dp(14), paint);
+            canvas.drawRoundRect(retryBtn, dp(16), dp(16), paint);
             textPaint.setColor(Color.WHITE);
-            textPaint.setTextSize(sp(12));
+            textPaint.setTextSize(sp(13));
             textPaint.setTypeface(Typeface.DEFAULT_BOLD);
             canvas.drawText("重新扫描并连接", retryBtn.centerX(), retryBtn.centerY() + dp(4), textPaint);
 
@@ -590,28 +595,28 @@ public class MainActivity extends Activity {
 
         private void drawHapticSettingDialog(Canvas canvas, float w, float h) {
             paint.setStyle(Paint.Style.FILL);
-            paint.setColor(Color.parseColor("#4D0A192F"));
+            paint.setColor(Color.parseColor("#600F172A"));
             canvas.drawRect(0, 0, w, h, paint);
 
             float dw = w - dp(60);
-            float dh = dp(230);
+            float dh = dp(240);
             float dx = dp(30);
             float dy = (h - dh) / 2.0f;
             RectF dlgRect = new RectF(dx, dy, dx + dw, dy + dh);
 
-            drawGlassPanel(canvas, dlgRect, dp(24));
+            drawGlassPanel(canvas, dlgRect, dp(26));
 
             textPaint.setTextAlign(Paint.Align.LEFT);
-            textPaint.setColor(Color.parseColor("#0F2840"));
-            textPaint.setTextSize(sp(15));
+            textPaint.setColor(Color.parseColor("#0F172A"));
+            textPaint.setTextSize(sp(16));
             textPaint.setTypeface(Typeface.DEFAULT_BOLD);
-            canvas.drawText("HAPTIC INTENSITY / 阻尼震感调节", dx + dp(20), dy + dp(36), textPaint);
+            canvas.drawText("触控马达反馈强度调节", dx + dp(22), dy + dp(38), textPaint);
 
-            String[] levels = {"关断", "轻柔", "标准", "强劲"};
-            String[] subTexts = {"0% 无", "30% 细微", "70% 咔哒", "100% 重度"};
+            String[] levels = {"关闭", "轻柔", "标准", "强劲"};
+            String[] subTexts = {"无震感", "30% 细微", "70% 咔哒", "100% 重度"};
             float itemW = (dw - dp(50)) / 4.0f;
-            float itemH = dp(75);
-            float itemY = dy + dp(76);
+            float itemH = dp(78);
+            float itemY = dy + dp(65);
 
             for (int i = 0; i < 4; i++) {
                 float itemX = dx + dp(20) + i * (itemW + dp(3.3f));
@@ -619,59 +624,55 @@ public class MainActivity extends Activity {
                 boolean isSelected = (hapticStrength == i);
 
                 paint.setStyle(Paint.Style.FILL);
-                paint.setColor(isSelected ? Color.parseColor("#DDF0F9FF") : Color.parseColor("#50FFFFFF"));
+                paint.setColor(isSelected ? Color.parseColor("#E0F2FE") : Color.parseColor("#70FFFFFF"));
                 canvas.drawRoundRect(itemRect, dp(14), dp(14), paint);
 
                 paint.setStyle(Paint.Style.STROKE);
-                paint.setColor(isSelected ? Color.rgb(rgbRed, rgbGreen, rgbBlue) : Color.parseColor("#40CBD5E1"));
-                paint.setStrokeWidth(isSelected ? dp(2) : dp(1));
+                paint.setColor(isSelected ? Color.rgb(rgbRed, rgbGreen, rgbBlue) : Color.parseColor("#CBD5E1"));
+                paint.setStrokeWidth(isSelected ? dp(2.5f) : dp(1));
                 canvas.drawRoundRect(itemRect, dp(14), dp(14), paint);
 
                 textPaint.setTextAlign(Paint.Align.CENTER);
                 textPaint.setColor(isSelected ? Color.rgb(rgbRed, rgbGreen, rgbBlue) : Color.parseColor("#0F172A"));
-                textPaint.setTextSize(sp(13));
+                textPaint.setTextSize(sp(13.5f));
                 textPaint.setTypeface(Typeface.DEFAULT_BOLD);
-                canvas.drawText(levels[i], itemRect.centerX(), itemY + dp(30), textPaint);
+                canvas.drawText(levels[i], itemRect.centerX(), itemY + dp(32), textPaint);
 
                 textPaint.setColor(isSelected ? Color.parseColor("#0369A1") : Color.parseColor("#94A3B8"));
-                textPaint.setTextSize(sp(8));
-                textPaint.setTypeface(Typeface.DEFAULT);
-                canvas.drawText(subTexts[i], itemRect.centerX(), itemY + dp(50), textPaint);
+                textPaint.setTextSize(sp(8.5f));
+                canvas.drawText(subTexts[i], itemRect.centerX(), itemY + dp(54), textPaint);
             }
 
-            RectF closeBtn = new RectF(dx + dp(20), dy + dh - dp(52), dx + dw - dp(20), dy + dh - dp(18));
+            RectF closeBtn = new RectF(dx + dp(20), dy + dh - dp(54), dx + dw - dp(20), dy + dh - dp(18));
             paint.setStyle(Paint.Style.FILL);
             paint.setColor(Color.rgb(rgbRed, rgbGreen, rgbBlue));
-            canvas.drawRoundRect(closeBtn, dp(14), dp(14), paint);
-
-            textPaint.setTextAlign(Paint.Align.CENTER);
+            canvas.drawRoundRect(closeBtn, dp(16), dp(16), paint);
             textPaint.setColor(Color.WHITE);
-            textPaint.setTextSize(sp(12));
+            textPaint.setTextSize(sp(13));
             textPaint.setTypeface(Typeface.DEFAULT_BOLD);
             canvas.drawText("确定并保存", closeBtn.centerX(), closeBtn.centerY() + dp(4), textPaint);
         }
 
         private void drawRgbSettingDialog(Canvas canvas, float w, float h) {
             paint.setStyle(Paint.Style.FILL);
-            paint.setColor(Color.parseColor("#4D0A192F"));
+            paint.setColor(Color.parseColor("#600F172A"));
             canvas.drawRect(0, 0, w, h, paint);
 
             float dw = w - dp(60);
-            float dh = dp(270);
+            float dh = dp(280);
             float dx = dp(30);
             float dy = (h - dh) / 2.0f;
             RectF dlgRect = new RectF(dx, dy, dx + dw, dy + dh);
 
-            drawGlassPanel(canvas, dlgRect, dp(24));
+            drawGlassPanel(canvas, dlgRect, dp(26));
 
             textPaint.setTextAlign(Paint.Align.LEFT);
-            textPaint.setColor(Color.parseColor("#0F2840"));
-            textPaint.setTextSize(sp(15));
+            textPaint.setColor(Color.parseColor("#0F172A"));
+            textPaint.setTextSize(sp(16));
             textPaint.setTypeface(Typeface.DEFAULT_BOLD);
-            canvas.drawText("RGB AMBIENT / 氛围灯色温自定义", dx + dp(20), dy + dp(36), textPaint);
+            canvas.drawText("RGB 氛围灯效色彩自定义", dx + dp(22), dy + dp(38), textPaint);
 
-            // 预设色彩选项卡
-            String[] presetNames = {"冰蓝", "极光", "烈红", "纯白"};
+            String[] presetNames = {"冰蓝座舱", "极光绿", "电竞烈红", "纯白流光"};
             int[][] presetColors = {
                     {0, 160, 233},
                     {16, 185, 129},
@@ -684,38 +685,37 @@ public class MainActivity extends Activity {
 
             for (int i = 0; i < 4; i++) {
                 float pX = dx + dp(20) + i * (pW + dp(3.3f));
-                RectF pRect = new RectF(pX, pY, pX + pW, pY + dp(46));
+                RectF pRect = new RectF(pX, pY, pX + pW, pY + dp(50));
                 paint.setStyle(Paint.Style.FILL);
                 paint.setColor(Color.rgb(presetColors[i][0], presetColors[i][1], presetColors[i][2]));
-                canvas.drawRoundRect(pRect, dp(10), dp(10), paint);
+                canvas.drawRoundRect(pRect, dp(12), dp(12), paint);
 
                 textPaint.setTextAlign(Paint.Align.CENTER);
                 textPaint.setColor(i == 3 ? Color.BLACK : Color.WHITE);
-                textPaint.setTextSize(sp(11));
+                textPaint.setTextSize(sp(10.5f));
                 canvas.drawText(presetNames[i], pRect.centerX(), pRect.centerY() + dp(4), textPaint);
             }
 
-            // 当前混合色预览条
-            RectF previewRect = new RectF(dx + dp(20), dy + dp(130), dx + dw - dp(20), dy + dp(175));
+            RectF previewRect = new RectF(dx + dp(20), dy + dp(135), dx + dw - dp(20), dy + dp(182));
             paint.setStyle(Paint.Style.FILL);
             paint.setColor(Color.rgb(rgbRed, rgbGreen, rgbBlue));
-            canvas.drawRoundRect(previewRect, dp(14), dp(14), paint);
+            canvas.drawRoundRect(previewRect, dp(16), dp(16), paint);
             textPaint.setColor(Color.WHITE);
-            canvas.drawText("RGB(" + rgbRed + ", " + rgbGreen + ", " + rgbBlue + ")", previewRect.centerX(), previewRect.centerY() + dp(4), textPaint);
+            canvas.drawText("当前配色: RGB (" + rgbRed + ", " + rgbGreen + ", " + rgbBlue + ")", previewRect.centerX(), previewRect.centerY() + dp(4), textPaint);
 
-            RectF closeBtn = new RectF(dx + dp(20), dy + dh - dp(52), dx + dw - dp(20), dy + dh - dp(18));
+            RectF closeBtn = new RectF(dx + dp(20), dy + dh - dp(54), dx + dw - dp(20), dy + dh - dp(18));
             paint.setStyle(Paint.Style.FILL);
             paint.setColor(Color.rgb(rgbRed, rgbGreen, rgbBlue));
-            canvas.drawRoundRect(closeBtn, dp(14), dp(14), paint);
+            canvas.drawRoundRect(closeBtn, dp(16), dp(16), paint);
             textPaint.setColor(Color.WHITE);
-            canvas.drawText("应用配色方案", closeBtn.centerX(), closeBtn.centerY() + dp(4), textPaint);
+            canvas.drawText("应用此配色方案", closeBtn.centerX(), closeBtn.centerY() + dp(4), textPaint);
         }
 
         private void drawGlassPanel(Canvas canvas, RectF rect, float radius) {
             Paint fillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
             Shader fillShader = new LinearGradient(
                     rect.left, rect.top, rect.right, rect.bottom,
-                    new int[]{Color.parseColor("#E6FFFFFF"), Color.parseColor("#BAF0F9FF"), Color.parseColor("#CFFFFFFF")},
+                    new int[]{Color.parseColor("#EBFFFFFF"), Color.parseColor("#B0EAF4FF"), Color.parseColor("#D5FFFFFF")},
                     new float[]{0f, 0.55f, 1f},
                     Shader.TileMode.CLAMP
             );
@@ -725,8 +725,8 @@ public class MainActivity extends Activity {
 
             Paint sheenPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
             Shader sheenShader = new LinearGradient(
-                    rect.left, rect.top, rect.left, rect.top + rect.height() * 0.45f,
-                    new int[]{Color.parseColor("#90FFFFFF"), Color.parseColor("#00FFFFFF")},
+                    rect.left, rect.top, rect.left, rect.top + rect.height() * 0.4f,
+                    new int[]{Color.parseColor("#A0FFFFFF"), Color.parseColor("#00FFFFFF")},
                     null,
                     Shader.TileMode.CLAMP
             );
@@ -737,56 +737,14 @@ public class MainActivity extends Activity {
             Paint strokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
             Shader strokeShader = new LinearGradient(
                     rect.left, rect.top, rect.right, rect.bottom,
-                    new int[]{Color.parseColor("#FFFFFFFF"), Color.parseColor("#60BAE6FD"), Color.parseColor("#20FFFFFF")},
+                    new int[]{Color.parseColor("#FFFFFFFF"), Color.parseColor("#70BAE6FD"), Color.parseColor("#30FFFFFF")},
                     new float[]{0f, 0.4f, 1f},
                     Shader.TileMode.CLAMP
             );
             strokePaint.setShader(strokeShader);
             strokePaint.setStyle(Paint.Style.STROKE);
-            strokePaint.setStrokeWidth(dp(1.2f));
+            strokePaint.setStrokeWidth(dp(1.5f));
             canvas.drawRoundRect(rect, radius, radius, strokePaint);
-        }
-
-        private void drawGlassOrbKnob(Canvas canvas, float cx, float cy, float r, float angle) {
-            Paint ringPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-            ringPaint.setStyle(Paint.Style.STROKE);
-            ringPaint.setStrokeWidth(dp(3f));
-            Shader ringShader = new SweepGradient(
-                    cx, cy,
-                    new int[]{Color.WHITE, Color.rgb(rgbRed, rgbGreen, rgbBlue), Color.WHITE, Color.parseColor("#CBD5E1"), Color.WHITE},
-                    null
-            );
-            ringPaint.setShader(ringShader);
-            canvas.drawCircle(cx, cy, r, ringPaint);
-
-            Paint orbPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-            Shader orbShader = new RadialGradient(
-                    cx - r * 0.3f, cy - r * 0.35f, r * 1.2f,
-                    new int[]{Color.WHITE, Color.argb(120, rgbRed, rgbGreen, rgbBlue), Color.parseColor("#F8FAFC")},
-                    new float[]{0f, 0.65f, 1f},
-                    Shader.TileMode.CLAMP
-            );
-            orbPaint.setShader(orbShader);
-            orbPaint.setStyle(Paint.Style.FILL);
-            canvas.drawCircle(cx, cy, r - dp(3.5f), orbPaint);
-
-            double rad = Math.toRadians(angle);
-            float startX = cx + (float) (dp(16) * Math.cos(rad));
-            float startY = cy + (float) (dp(16) * Math.sin(rad));
-            float endX = cx + (float) ((r - dp(8)) * Math.cos(rad));
-            float endY = cy + (float) ((r - dp(8)) * Math.sin(rad));
-
-            Paint ptrPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-            ptrPaint.setStyle(Paint.Style.STROKE);
-            ptrPaint.setColor(Color.rgb(rgbRed, rgbGreen, rgbBlue));
-            ptrPaint.setStrokeWidth(dp(4));
-            ptrPaint.setStrokeCap(Paint.Cap.ROUND);
-            canvas.drawLine(startX, startY, endX, endY, ptrPaint);
-
-            Paint tipPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-            tipPaint.setStyle(Paint.Style.FILL);
-            tipPaint.setColor(Color.WHITE);
-            canvas.drawCircle(endX, endY, dp(1.5f), tipPaint);
         }
 
         private void drawGauge(Canvas canvas, float cx, float cy, float r, float startAngle, float sweep, float progress) {
@@ -818,17 +776,18 @@ public class MainActivity extends Activity {
             float w = getWidth();
             float h = getHeight();
             float knobCx = w / 2.0f;
-            float knobCy = dp(455);
+            float knobCy = dp(475);
+            float knobR = dp(125);
 
             if (isSearchingCooler) {
                 if (event.getAction() == MotionEvent.ACTION_DOWN) {
                     float dw = w - dp(48);
-                    float dh = dp(280);
+                    float dh = dp(290);
                     float dx = dp(24);
                     float dy = dp(190);
                     float btnW = dw - dp(48);
-                    float btnY = dy + dh - dp(56);
-                    RectF retryBtn = new RectF(dx + dp(24), btnY, dx + dp(24) + btnW, btnY + dp(40));
+                    float btnY = dy + dh - dp(58);
+                    RectF retryBtn = new RectF(dx + dp(24), btnY, dx + dp(24) + btnW, btnY + dp(42));
 
                     if (retryBtn.contains(event.getX(), event.getY())) {
                         triggerHaptic(false);
@@ -844,7 +803,7 @@ public class MainActivity extends Activity {
             if (isRgbDialogVisible) {
                 if (event.getAction() == MotionEvent.ACTION_DOWN) {
                     float dw = w - dp(60);
-                    float dh = dp(270);
+                    float dh = dp(280);
                     float dx = dp(30);
                     float dy = (h - dh) / 2.0f;
 
@@ -854,7 +813,7 @@ public class MainActivity extends Activity {
                         return true;
                     }
 
-                    RectF closeBtn = new RectF(dx + dp(20), dy + dh - dp(52), dx + dw - dp(20), dy + dh - dp(18));
+                    RectF closeBtn = new RectF(dx + dp(20), dy + dh - dp(54), dx + dw - dp(20), dy + dh - dp(18));
                     if (closeBtn.contains(event.getX(), event.getY())) {
                         isRgbDialogVisible = false;
                         triggerHaptic(false);
@@ -872,7 +831,7 @@ public class MainActivity extends Activity {
                     };
                     for (int i = 0; i < 4; i++) {
                         float pX = dx + dp(20) + i * (pW + dp(3.3f));
-                        RectF pRect = new RectF(pX, pY, pX + pW, pY + dp(46));
+                        RectF pRect = new RectF(pX, pY, pX + pW, pY + dp(50));
                         if (pRect.contains(event.getX(), event.getY())) {
                             rgbRed = presetColors[i][0];
                             rgbGreen = presetColors[i][1];
@@ -889,7 +848,7 @@ public class MainActivity extends Activity {
             if (isHapticDialogVisible) {
                 if (event.getAction() == MotionEvent.ACTION_DOWN) {
                     float dw = w - dp(60);
-                    float dh = dp(230);
+                    float dh = dp(240);
                     float dx = dp(30);
                     float dy = (h - dh) / 2.0f;
 
@@ -899,7 +858,7 @@ public class MainActivity extends Activity {
                         return true;
                     }
 
-                    RectF closeBtn = new RectF(dx + dp(20), dy + dh - dp(52), dx + dw - dp(20), dy + dh - dp(18));
+                    RectF closeBtn = new RectF(dx + dp(20), dy + dh - dp(54), dx + dw - dp(20), dy + dh - dp(18));
                     if (closeBtn.contains(event.getX(), event.getY())) {
                         isHapticDialogVisible = false;
                         triggerHaptic(false);
@@ -908,8 +867,8 @@ public class MainActivity extends Activity {
                     }
 
                     float itemW = (dw - dp(50)) / 4.0f;
-                    float itemH = dp(75);
-                    float itemY = dy + dp(76);
+                    float itemH = dp(78);
+                    float itemY = dy + dp(65);
 
                     for (int i = 0; i < 4; i++) {
                         float itemX = dx + dp(20) + i * (itemW + dp(3.3f));
@@ -925,7 +884,7 @@ public class MainActivity extends Activity {
                 return true;
             }
 
-            RectF capRect = new RectF(knobCx - dp(70), knobCy + dp(74), knobCx + dp(70), knobCy + dp(98));
+            RectF capRect = new RectF(knobCx - dp(75), knobCy + dp(145), knobCx + dp(75), knobCy + dp(175));
             if (event.getAction() == MotionEvent.ACTION_DOWN && capRect.contains(event.getX(), event.getY())) {
                 isHapticDialogVisible = true;
                 triggerHaptic(false);
@@ -933,7 +892,6 @@ public class MainActivity extends Activity {
                 return true;
             }
 
-            // 点击底部 RGB 氛围灯区域打开调色窗
             if (event.getAction() == MotionEvent.ACTION_DOWN && event.getY() > h - dp(90)) {
                 isRgbDialogVisible = true;
                 triggerHaptic(false);
@@ -941,9 +899,10 @@ public class MainActivity extends Activity {
                 return true;
             }
 
+            // 大仪表盘触控选档逻辑
             float dx = event.getX() - knobCx;
             float dy = event.getY() - knobCy;
-            if (Math.sqrt(dx * dx + dy * dy) <= dp(130)) {
+            if (Math.sqrt(dx * dx + dy * dy) <= knobR) {
                 double deg = Math.toDegrees(Math.atan2(dy, dx));
                 if (deg < 0) deg += 360;
 
