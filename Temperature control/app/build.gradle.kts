@@ -35,5 +35,5 @@ android {
 }
 
 dependencies {
-    implementation("androidx.core:core-ktx:1.12.0")
+    // 故意留空：彻底清除所有隐式引入的后台启动器和多余 dex
 }
