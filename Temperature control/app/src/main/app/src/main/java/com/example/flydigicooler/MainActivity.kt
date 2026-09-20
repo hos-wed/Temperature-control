@@ -1,32 +1,50 @@
-<?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+package com.example.flydigicooler
 
-    <!-- 蓝牙扫描与连接权限 -->
-    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
-    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
-    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+import android.app.Activity
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.BatteryManager
+import android.os.Bundle
+import android.widget.Toast
 
-    <!-- 手机马达振动权限 -->
-    <uses-permission android:name="android.permission.VIBRATE" />
+class MainActivity : Activity() {
 
-    <application
-        android:allowBackup="true"
-        android:icon="@mipmap/ic_launcher"
-        android:label="Temperature control"
-        android:roundIcon="@mipmap/ic_launcher"
-        android:supportsRtl="true"
-        android:theme="@android:style/Theme.Material.Light.NoActionBar">
-        <activity
-            android:name=".MainActivity"
-            android:exported="true"
-            android:theme="@android:style/Theme.Material.Light.NoActionBar">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
-    </application>
+    private lateinit var dashboardView: CoolerDashboardView
 
-</manifest>
+    // 系统电池温度广播监听（精准获取硬件实际发热）
+    private val batteryReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            intent?.let {
+                val tempRaw = it.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0)
+                if (tempRaw > 0) {
+                    dashboardView.phoneTemp = tempRaw / 10.0f
+                    dashboardView.invalidate()
+                }
+            }
+        }
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        // 直接挂载纯白淡蓝自绘现代车机控件
+        dashboardView = CoolerDashboardView(this)
+        setContentView(dashboardView)
+
+        // 阻尼旋钮档位切换回调
+        dashboardView.onGearChangedListener = { gear ->
+            val msg = "已切换至 ${gear.title}（${gear.desc}）"
+            Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+        }
+
+        // 注册系统温度监听
+        registerReceiver(batteryReceiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        unregisterReceiver(batteryReceiver)
+    }
+}
