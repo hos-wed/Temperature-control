@@ -47,7 +47,6 @@ public class MainActivity extends Activity {
         @Override
         public void onReceive(Context context, Intent intent) {
             if (intent != null && dashboardView != null && !dashboardView.isSearchingCooler) {
-                // 直接使用系统广播获取的真实温度进行实时渲染（不随档位虚拟干预）
                 int tempRaw = intent.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 300);
                 dashboardView.actualColdPlateTemp = tempRaw / 10.0f;
             }
@@ -283,9 +282,9 @@ public class MainActivity extends Activity {
     }
 
     public static class DashboardView extends View {
-        public float actualColdPlateTemp = 28.5f; // 实时真实冷面温度
+        public float actualColdPlateTemp = 28.5f;
         public int fanRpm = 5400;
-        public int currentLevel = 3; // 0代表关闭
+        public int currentLevel = 3;
         public boolean isAmbientOn = true;
 
         public boolean isSearchingCooler = true;
@@ -325,7 +324,6 @@ public class MainActivity extends Activity {
                 return;
             }
 
-            // 温度微幅自然波动渲染
             animTick += 0.05f;
             float naturalFluctuation = (float) Math.sin(animTick) * 0.12f;
             float displayTemp = actualColdPlateTemp + naturalFluctuation;
@@ -365,7 +363,6 @@ public class MainActivity extends Activity {
             paint.setStrokeWidth(dp(2f));
             canvas.drawLine(w / 2.0f, dp(100), w / 2.0f, dp(268), paint);
 
-            // 左表：真实冷面温度（不受档位干预）
             float leftCx = w * 0.26f;
             float gaugeCy = dp(180);
             float gaugeR = dp(46);
@@ -386,7 +383,6 @@ public class MainActivity extends Activity {
             textPaint.setTypeface(Typeface.DEFAULT_BOLD);
             canvas.drawText("冷面实时温度", leftCx, gaugeCy + dp(22), textPaint);
 
-            // 右表：转速
             float rightCx = w * 0.74f;
             drawGauge(canvas, rightCx, gaugeCy, gaugeR, 45, -220, Math.min(1.0f, fanRpm / 7500.0f));
 
@@ -405,7 +401,6 @@ public class MainActivity extends Activity {
             textPaint.setTypeface(Typeface.DEFAULT_BOLD);
             canvas.drawText("风扇转速", rightCx, gaugeCy + dp(22), textPaint);
 
-            // 大仪表盘
             float knobCx = w / 2.0f;
             float knobCy = dp(475);
             float knobR = dp(125);
@@ -649,7 +644,7 @@ public class MainActivity extends Activity {
             canvas.drawRect(0, 0, w, h, paint);
 
             float dw = w - dp(60);
-            float dh = dp(280);
+            float dh = dp(380); // 增加高度以容纳RGB滑动条
             float dx = dp(30);
             float dy = (h - dh) / 2.0f;
             RectF dlgRect = new RectF(dx, dy, dx + dw, dy + dh);
@@ -662,6 +657,7 @@ public class MainActivity extends Activity {
             textPaint.setTypeface(Typeface.DEFAULT_BOLD);
             canvas.drawText("RGB 氛围灯效色彩自定义", dx + dp(22), dy + dp(38), textPaint);
 
+            // 1. 保留原预设选项卡
             String[] presetNames = {"冰蓝座舱", "极光绿", "电竞烈红", "纯白流光"};
             int[][] presetColors = {
                     {0, 160, 233},
@@ -671,34 +667,71 @@ public class MainActivity extends Activity {
             };
 
             float pW = (dw - dp(50)) / 4.0f;
-            float pY = dy + dp(65);
+            float pY = dy + dp(60);
 
             for (int i = 0; i < 4; i++) {
                 float pX = dx + dp(20) + i * (pW + dp(3.3f));
-                RectF pRect = new RectF(pX, pY, pX + pW, pY + dp(50));
+                RectF pRect = new RectF(pX, pY, pX + pW, pY + dp(42));
                 paint.setStyle(Paint.Style.FILL);
                 paint.setColor(Color.rgb(presetColors[i][0], presetColors[i][1], presetColors[i][2]));
-                canvas.drawRoundRect(pRect, dp(12), dp(12), paint);
+                canvas.drawRoundRect(pRect, dp(10), dp(10), paint);
 
                 textPaint.setTextAlign(Paint.Align.CENTER);
                 textPaint.setColor(i == 3 ? Color.BLACK : Color.WHITE);
-                textPaint.setTextSize(sp(10.5f));
-                canvas.drawText(presetNames[i], pRect.centerX(), pRect.centerY() + dp(4), textPaint);
+                textPaint.setTextSize(sp(10));
+                canvas.drawText(presetNames[i], pRect.centerX(), pRect.centerY() + dp(3), textPaint);
             }
 
-            RectF previewRect = new RectF(dx + dp(20), dy + dp(135), dx + dw - dp(20), dy + dp(182));
-            paint.setStyle(Paint.Style.FILL);
-            paint.setColor(Color.rgb(rgbRed, rgbGreen, rgbBlue));
-            canvas.drawRoundRect(previewRect, dp(16), dp(16), paint);
-            textPaint.setColor(Color.WHITE);
-            canvas.drawText("当前配色: RGB (" + rgbRed + ", " + rgbGreen + ", " + rgbBlue + ")", previewRect.centerX(), previewRect.centerY() + dp(4), textPaint);
+            // 2. 新增 RGB 自定义滑动调节条
+            float sliderY = dy + dp(120);
+            float sliderW = dw - dp(40);
+            
+            // 红色滑动条
+            drawColorSlider(canvas, dx + dp(20), sliderY, sliderW, "红 (R): " + rgbRed, rgbRed, Color.RED);
+            // 绿色滑动条
+            drawColorSlider(canvas, dx + dp(20), sliderY + dp(45), sliderW, "绿 (G): " + rgbGreen, rgbGreen, Color.GREEN);
+            // 蓝色滑动条
+            drawColorSlider(canvas, dx + dp(20), sliderY + dp(90), sliderW, "蓝 (B): " + rgbBlue, rgbBlue, Color.BLUE);
 
-            RectF closeBtn = new RectF(dx + dp(20), dy + dh - dp(54), dx + dw - dp(20), dy + dh - dp(18));
+            // 3. 当前混合色实时预览
+            RectF previewRect = new RectF(dx + dp(20), dy + dp(270), dx + dw - dp(20), dy + dp(315));
             paint.setStyle(Paint.Style.FILL);
             paint.setColor(Color.rgb(rgbRed, rgbGreen, rgbBlue));
-            canvas.drawRoundRect(closeBtn, dp(16), dp(16), paint);
+            canvas.drawRoundRect(previewRect, dp(14), dp(14), paint);
+            textPaint.setColor((rgbRed * 0.299f + rgbGreen * 0.587f + rgbBlue * 0.114f) > 150 ? Color.BLACK : Color.WHITE);
+            canvas.drawText("实时配色预览: RGB (" + rgbRed + ", " + rgbGreen + ", " + rgbBlue + ")", previewRect.centerX(), previewRect.centerY() + dp(4), textPaint);
+
+            // 4. 底部确认按钮
+            RectF closeBtn = new RectF(dx + dp(20), dy + dh - dp(50), dx + dw - dp(20), dy + dh - dp(18));
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.rgb(rgbRed, rgbGreen, rgbBlue));
+            canvas.drawRoundRect(closeBtn, dp(14), dp(14), paint);
             textPaint.setColor(Color.WHITE);
-            canvas.drawText("应用此配色方案", closeBtn.centerX(), closeBtn.centerY() + dp(4), textPaint);
+            textPaint.setTextSize(sp(12.5f));
+            textPaint.setTypeface(Typeface.DEFAULT_BOLD);
+            canvas.drawText("确定并应用配色", closeBtn.centerX(), closeBtn.centerY() + dp(4), textPaint);
+        }
+
+        private void drawColorSlider(Canvas canvas, float x, float y, float w, String label, int val, int tintColor) {
+            textPaint.setTextAlign(Paint.Align.LEFT);
+            textPaint.setColor(Color.parseColor("#0F172A"));
+            textPaint.setTextSize(sp(11));
+            textPaint.setTypeface(Typeface.DEFAULT_BOLD);
+            canvas.drawText(label, x, y, textPaint);
+
+            float trackY = y + dp(10);
+            RectF track = new RectF(x, trackY, x + w, trackY + dp(8));
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.parseColor("#CBD5E1"));
+            canvas.drawRoundRect(track, dp(4), dp(4), paint);
+
+            float progressW = w * (val / 255.0f);
+            RectF progress = new RectF(x, trackY, x + progressW, trackY + dp(8));
+            paint.setColor(tintColor);
+            canvas.drawRoundRect(progress, dp(4), dp(4), paint);
+
+            // 滑块圆点
+            canvas.drawCircle(x + progressW, trackY + dp(4), dp(8), paint);
         }
 
         private void drawGlassPanel(Canvas canvas, RectF rect, float radius) {
@@ -791,42 +824,64 @@ public class MainActivity extends Activity {
             }
 
             if (isRgbDialogVisible) {
-                if (event.getAction() == MotionEvent.ACTION_DOWN) {
+                if (event.getAction() == MotionEvent.ACTION_DOWN || event.getAction() == MotionEvent.ACTION_MOVE) {
                     float dw = w - dp(60);
-                    float dh = dp(280);
+                    float dh = dp(380);
                     float dx = dp(30);
                     float dy = (h - dh) / 2.0f;
 
-                    if (event.getX() < dx || event.getX() > dx + dw || event.getY() < dy || event.getY() > dy + dh) {
-                        isRgbDialogVisible = false;
-                        postInvalidate();
-                        return true;
-                    }
+                    if (event.getAction() == MotionEvent.ACTION_DOWN) {
+                        if (event.getX() < dx || event.getX() > dx + dw || event.getY() < dy || event.getY() > dy + dh) {
+                            isRgbDialogVisible = false;
+                            postInvalidate();
+                            return true;
+                        }
 
-                    RectF closeBtn = new RectF(dx + dp(20), dy + dh - dp(54), dx + dw - dp(20), dy + dh - dp(18));
-                    if (closeBtn.contains(event.getX(), event.getY())) {
-                        isRgbDialogVisible = false;
-                        triggerHaptic(false);
-                        postInvalidate();
-                        return true;
-                    }
-
-                    float pW = (dw - dp(50)) / 4.0f;
-                    float pY = dy + dp(65);
-                    int[][] presetColors = {
-                            {0, 160, 233},
-                            {16, 185, 129},
-                            {239, 68, 68},
-                            {255, 255, 255}
-                    };
-                    for (int i = 0; i < 4; i++) {
-                        float pX = dx + dp(20) + i * (pW + dp(3.3f));
-                        RectF pRect = new RectF(pX, pY, pX + pW, pY + dp(50));
-                        if (pRect.contains(event.getX(), event.getY())) {
-                            rgbRed = presetColors[i][0];
-                            rgbGreen = presetColors[i][1];
-                            rgbBlue = presetColors[i][2];
+                        RectF closeBtn = new RectF(dx + dp(20), dy + dh - dp(50), dx + dw - dp(20), dy + dh - dp(18));
+                        if (closeBtn.contains(event.getX(), event.getY())) {
+                            isRgbDialogVisible = false;
                             triggerHaptic(false);
+                            postInvalidate();
+                            return true;
+                        }
+
+                        // 预设点击
+                        float pW = (dw - dp(50)) / 4.0f;
+                        float pY = dy + dp(60);
+                        int[][] presetColors = {
+                                {0, 160, 233},
+                                {16, 185, 129},
+                                {239, 68, 68},
+                                {255, 255, 255}
+                        };
+                        for (int i = 0; i < 4; i++) {
+                            float pX = dx + dp(20) + i * (pW + dp(3.3f));
+                            RectF pRect = new RectF(pX, pY, pX + pW, pY + dp(42));
+                            if (pRect.contains(event.getX(), event.getY())) {
+                                rgbRed = presetColors[i][0];
+                                rgbGreen = presetColors[i][1];
+                                rgbBlue = presetColors[i][2];
+                                triggerHaptic(false);
+                                postInvalidate();
+                                return true;
+                            }
+                        }
+                    }
+
+                    // 滑块拖动逻辑
+                    float sliderY = dy + dp(120);
+                    float sliderW = dw - dp(40);
+                    float startX = dx + dp(20);
+
+                    for (int i = 0; i < 3; i++) {
+                        float sY = sliderY + (i * dp(45));
+                        RectF touchZone = new RectF(startX - dp(10), sY, startX + sliderW + dp(10), sY + dp(30));
+                        if (touchZone.contains(event.getX(), event.getY())) {
+                            float ratio = (event.getX() - startX) / sliderW;
+                            int val = Math.max(0, Math.min(255, (int)(ratio * 255)));
+                            if (i == 0) rgbRed = val;
+                            else if (i == 1) rgbGreen = val;
+                            else if (i == 2) rgbBlue = val;
                             postInvalidate();
                             return true;
                         }
@@ -889,7 +944,6 @@ public class MainActivity extends Activity {
                 return true;
             }
 
-            // 大仪表盘触控选档逻辑（修复关闭档位生效）
             float dx = event.getX() - knobCx;
             float dy = event.getY() - knobCy;
             if (Math.sqrt(dx * dx + dy * dy) <= knobR) {
@@ -912,7 +966,7 @@ public class MainActivity extends Activity {
                     currentLevel = best;
                     triggerHaptic(currentLevel == 0 || currentLevel == 4);
                     int[] rpms = {0, 2500, 3800, 5400, 7200, 4200};
-                    fanRpm = rpms[currentLevel]; // 选择关闭档位时风扇转速准确归零
+                    fanRpm = rpms[currentLevel];
                     postInvalidate();
                 }
                 return true;
