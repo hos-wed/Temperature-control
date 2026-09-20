@@ -56,7 +56,6 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // 全局未捕获异常保护，避免静默秒退
         Thread.setDefaultUncaughtExceptionHandler((thread, throwable) -> {
             throwable.printStackTrace();
             mainHandler.post(() -> {
@@ -184,7 +183,6 @@ public class MainActivity extends Activity {
             String name = null;
 
             try {
-                // 部分设备获取设备名会触发 SecurityException
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     if (checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
                         name = device.getName();
@@ -194,7 +192,6 @@ public class MainActivity extends Activity {
                 }
             } catch (Throwable ignored) {}
 
-            // 也支持从广播记录中匹配
             if (name == null && result.getScanRecord() != null) {
                 name = result.getScanRecord().getDeviceName();
             }
@@ -217,7 +214,6 @@ public class MainActivity extends Activity {
         });
 
         try {
-            // Android 7.0+ 推荐使用带 TRANSPORT_LE 的连接方式以保证兼容性与防崩
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 connectedGatt = device.connectGatt(getApplicationContext(), false, gattCallback, BluetoothDevice.TRANSPORT_LE);
             } else {
@@ -234,7 +230,6 @@ public class MainActivity extends Activity {
     private final BluetoothGattCallback gattCallback = new BluetoothGattCallback() {
         @Override
         public void onConnectionStateChange(final BluetoothGatt gatt, int status, int newState) {
-            // 必须全部切回主线程执行任何状态更新
             mainHandler.post(() -> {
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
                     dashboardView.connectedDeviceName = "COOLER UNIT";
@@ -300,7 +295,7 @@ public class MainActivity extends Activity {
             float w = getWidth();
             float h = getHeight();
 
-            // 1. 底层流体冷白背景
+            // 1. 底层冷感流体背景
             Paint bgPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
             Shader bgShader = new LinearGradient(
                     0, 0, w, h,
@@ -479,24 +474,40 @@ public class MainActivity extends Activity {
                 drawHapticSettingDialog(canvas, w, h);
             }
 
-            // 7. 设备连接弹窗
+            // 7. 【搜索页面：纯白背景 + 软件名 + 动态正在连接设备】
             if (isSearchingCooler) {
                 drawBleSearchOverlay(canvas, w, h);
             }
         }
 
+        /**
+         * 纯白背景 + 软件名 + 动态连接动效
+         */
         private void drawBleSearchOverlay(Canvas canvas, float w, float h) {
-            paint.setStyle(Paint.Style.FILL);
-            paint.setColor(Color.parseColor("#550A192F"));
-            canvas.drawRect(0, 0, w, h, paint);
+            // 1. 全屏纯白无暇背景
+            canvas.drawColor(Color.WHITE);
 
+            // 2. 顶部软件名（居中醒目标识）
+            textPaint.setTextAlign(Paint.Align.CENTER);
+            textPaint.setColor(Color.parseColor("#0F2840"));
+            textPaint.setTextSize(sp(20));
+            textPaint.setTypeface(Typeface.DEFAULT_BOLD);
+            canvas.drawText("TEMPERATURE CONTROL", w / 2.0f, dp(110), textPaint);
+
+            textPaint.setColor(Color.parseColor("#64748B"));
+            textPaint.setTextSize(sp(11));
+            textPaint.setTypeface(Typeface.DEFAULT);
+            canvas.drawText("极冷座舱 · 智能温控管理系统", w / 2.0f, dp(134), textPaint);
+
+            // 3. 中央液态白玻璃卡片
             float dw = w - dp(48);
             float dh = dp(270);
             float dx = dp(24);
-            float dy = (h - dh) / 2.0f;
+            float dy = dp(175);
             RectF dlgRect = new RectF(dx, dy, dx + dw, dy + dh);
             drawGlassPanel(canvas, dlgRect, dp(26));
 
+            // 雷达脉冲扩散波纹动画计算
             animTick += 0.04f;
             float pulseR1 = dp(28) + (float)(Math.sin(animTick) * dp(6));
             float pulseR2 = dp(46) + (float)(Math.cos(animTick) * dp(8));
@@ -504,6 +515,7 @@ public class MainActivity extends Activity {
             float radarCx = dlgRect.centerX();
             float radarCy = dy + dp(78);
 
+            // 扩散双层天青光环
             paint.setStyle(Paint.Style.STROKE);
             paint.setColor(Color.parseColor("#2000A0E9"));
             paint.setStrokeWidth(dp(2f));
@@ -513,12 +525,14 @@ public class MainActivity extends Activity {
             paint.setStrokeWidth(dp(1.5f));
             canvas.drawCircle(radarCx, radarCy, pulseR1, paint);
 
+            // 中心天青光珠
             paint.setStyle(Paint.Style.FILL);
             paint.setColor(Color.parseColor("#00A0E9"));
             canvas.drawCircle(radarCx, radarCy, dp(13), paint);
             paint.setColor(Color.WHITE);
             canvas.drawCircle(radarCx - dp(3.5f), radarCy - dp(3.5f), dp(4f), paint);
 
+            // 动态点号流转动画（正在连接设备. -> 正在连接设备.. -> 正在连接设备...）
             long now = System.currentTimeMillis();
             if (now - lastDotTime > 450) {
                 dotCount = (dotCount % 3) + 1;
@@ -534,6 +548,7 @@ public class MainActivity extends Activity {
                 displayText = scanStatus;
             }
 
+            // 核心动画主文本
             textPaint.setTextAlign(Paint.Align.CENTER);
             textPaint.setColor(Color.parseColor("#0F2840"));
             textPaint.setTextSize(sp(17));
@@ -545,6 +560,7 @@ public class MainActivity extends Activity {
             textPaint.setTypeface(Typeface.DEFAULT);
             canvas.drawText("请保持设备处于开启状态并靠近手机", radarCx, dy + dp(174), textPaint);
 
+            // 底部操作胶囊：【重新连接】与【直接进入】
             float btnW = (dw - dp(48)) / 2.0f;
             float btnY = dy + dh - dp(54);
 
@@ -761,7 +777,7 @@ public class MainActivity extends Activity {
                     float dw = w - dp(48);
                     float dh = dp(270);
                     float dx = dp(24);
-                    float dy = (h - dh) / 2.0f;
+                    float dy = dp(175);
                     float btnW = (dw - dp(48)) / 2.0f;
                     float btnY = dy + dh - dp(54);
 
