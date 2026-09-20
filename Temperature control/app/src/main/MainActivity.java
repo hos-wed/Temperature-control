@@ -42,7 +42,6 @@ public class MainActivity extends Activity {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private boolean isScanning = false;
 
-    // 飞智散热器常见的标准通信服务与特征值 UUID（可按实际固件协议调整）
     private static final UUID TARGET_SERVICE_UUID = UUID.fromString("0000ffe0-0000-1000-8000-00805f9b34fb");
     private static final UUID TARGET_CHAR_UUID = UUID.fromString("0000ffe1-0000-1000-8000-00805f9b34fb");
     private static final UUID CCCD_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
@@ -249,7 +248,6 @@ public class MainActivity extends Activity {
                     try {
                         Toast.makeText(getApplicationContext(), "硬件设备已成功连接", Toast.LENGTH_SHORT).show();
                     } catch (Throwable ignored) {}
-                    // 发现硬件服务以启用温度特征通知
                     gatt.discoverServices();
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                     disconnectAndCloseGatt();
@@ -281,12 +279,10 @@ public class MainActivity extends Activity {
 
         @Override
         public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
-            // 解析来自硬件的实时温度与状态数据包
             byte[] data = characteristic.getValue();
             if (data != null && data.length > 0) {
-                // 假设硬件上报的第1-2位为冷面温度原始数据（可根据实际协议转换）
                 int rawTemp = data[0] & 0xFF;
-                float hardwareTemp = rawTemp * 0.5f + 5.0f; // 协议温感换算
+                float hardwareTemp = rawTemp * 0.5f + 5.0f;
                 mainHandler.post(() -> {
                     if (dashboardView != null) {
                         dashboardView.actualColdPlateTemp = hardwareTemp;
@@ -297,9 +293,6 @@ public class MainActivity extends Activity {
         }
     };
 
-    /**
-     * 向硬件发送控制指令（开机/关机/切挡/调速）
-     */
     public void sendCommandToCooler(int level) {
         if (connectedGatt == null) return;
         try {
@@ -309,10 +302,10 @@ public class MainActivity extends Activity {
                 if (characteristic != null) {
                     byte[] payload;
                     if (level == 0) {
-                        // 关机 / 切断指令数据包
+                        // 关机指令：切断制冷与风扇
                         payload = new byte[]{(byte) 0xAA, (byte) 0x00, (byte) 0x00};
                     } else {
-                        // 开机 / 运行档位指令数据包 (带档位参数)
+                        // 开机启动与对应档位指令
                         payload = new byte[]{(byte) 0xAA, (byte) 0x01, (byte) level};
                     }
                     characteristic.setValue(payload);
@@ -331,7 +324,7 @@ public class MainActivity extends Activity {
     }
 
     public static class DashboardView extends View {
-        public float actualColdPlateTemp = 24.5f; // 由硬件实时上报反饋
+        public float actualColdPlateTemp = 24.5f;
         public int fanRpm = 5400;
         public int currentLevel = 3;
         public boolean isAmbientOn = true;
@@ -404,7 +397,6 @@ public class MainActivity extends Activity {
             paint.setStrokeWidth(dp(2f));
             canvas.drawLine(w / 2.0f, dp(100), w / 2.0f, dp(268), paint);
 
-            // 左表：硬件实时反馈的冷面温度
             float leftCx = w * 0.26f;
             float gaugeCy = dp(180);
             float gaugeR = dp(46);
@@ -425,7 +417,6 @@ public class MainActivity extends Activity {
             textPaint.setTypeface(Typeface.DEFAULT_BOLD);
             canvas.drawText("冷面实时温度", leftCx, gaugeCy + dp(22), textPaint);
 
-            // 右表：转速
             float rightCx = w * 0.74f;
             drawGauge(canvas, rightCx, gaugeCy, gaugeR, 45, -220, Math.min(1.0f, fanRpm / 7500.0f));
 
@@ -950,7 +941,6 @@ public class MainActivity extends Activity {
                 return true;
             }
 
-            // 大仪表盘触控选档逻辑（重写关机切断与开机重启指令下发）
             float dx = event.getX() - knobCx;
             float dy = event.getY() - knobCy;
             if (Math.sqrt(dx * dx + dy * dy) <= knobR) {
@@ -975,9 +965,10 @@ public class MainActivity extends Activity {
                     int[] rpms = {0, 2500, 3800, 5400, 7200, 4200};
                     fanRpm = rpms[currentLevel];
 
-                    // 向硬件发送控制指令：0代表关机切断散热，1-5代表开机及对应功率档位
-                    if (getContext() instanceof MainActivity) {
-                        ((MainActivity) getContext()).sendCommandToCooler(currentLevel);
+                    // 通过安全实例调用外部 Activity 的硬件指令下发通道
+                    Context ctx = getContext();
+                    if (ctx instanceof MainActivity) {
+                        ((MainActivity) ctx).sendCommandToCooler(currentLevel);
                     }
 
                     postInvalidate();
