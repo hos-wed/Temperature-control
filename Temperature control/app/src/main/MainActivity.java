@@ -16,7 +16,11 @@ import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanResult;
 import android.bluetooth.le.ScanSettings;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.pm.PackageManager;
 import android.graphics.*;
+import android.os.BatteryManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -292,10 +296,8 @@ public class MainActivity extends Activity {
                 if (characteristic != null) {
                     byte[] payload;
                     if (level == 0) {
-                        // 关机切断散热指令
                         payload = new byte[]{(byte) 0xAA, (byte) 0x00, (byte) 0x00};
                     } else {
-                        // 开机启动与对应档位指令
                         payload = new byte[]{(byte) 0xAA, (byte) 0x01, (byte) level};
                     }
                     characteristic.setValue(payload);
@@ -313,7 +315,7 @@ public class MainActivity extends Activity {
         mainHandler.removeCallbacksAndMessages(null);
     }
 
-    // 内部独立视图类
+    // 独立内部视图类
     public class DashboardView extends View {
         public float actualColdPlateTemp = 24.5f;
         public int fanRpm = 5400;
