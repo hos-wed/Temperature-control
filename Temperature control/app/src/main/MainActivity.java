@@ -6,19 +6,17 @@ import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCallback;
+import android.bluetooth.BluetoothGattCharacteristic;
+import android.bluetooth.BluetoothGattDescriptor;
+import android.bluetooth.BluetoothGattService;
 import android.bluetooth.BluetoothManager;
 import android.bluetooth.BluetoothProfile;
 import android.bluetooth.le.BluetoothLeScanner;
 import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanResult;
 import android.bluetooth.le.ScanSettings;
-import android.content.BroadcastReceiver;
 import android.content.Context;
-import android.content.Intent;
-import android.content.IntentFilter;
-import android.content.pm.PackageManager;
 import android.graphics.*;
-import android.os.BatteryManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -33,6 +31,7 @@ import android.widget.Toast;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.UUID;
 
 public class MainActivity extends Activity {
 
@@ -43,15 +42,10 @@ public class MainActivity extends Activity {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private boolean isScanning = false;
 
-    private final BroadcastReceiver batteryReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            if (intent != null && dashboardView != null && !dashboardView.isSearchingCooler) {
-                int tempRaw = intent.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 300);
-                dashboardView.actualColdPlateTemp = tempRaw / 10.0f;
-            }
-        }
-    };
+    // 飞智散热器常见的标准通信服务与特征值 UUID（可按实际固件协议调整）
+    private static final UUID TARGET_SERVICE_UUID = UUID.fromString("0000ffe0-0000-1000-8000-00805f9b34fb");
+    private static final UUID TARGET_CHAR_UUID = UUID.fromString("0000ffe1-0000-1000-8000-00805f9b34fb");
+    private static final UUID CCCD_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -69,10 +63,6 @@ public class MainActivity extends Activity {
 
         dashboardView = new DashboardView(this);
         setContentView(dashboardView);
-
-        try {
-            registerReceiver(batteryReceiver, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
-        } catch (Throwable ignored) {}
 
         initBleAndRequestPermissions();
     }
@@ -259,6 +249,8 @@ public class MainActivity extends Activity {
                     try {
                         Toast.makeText(getApplicationContext(), "硬件设备已成功连接", Toast.LENGTH_SHORT).show();
                     } catch (Throwable ignored) {}
+                    // 发现硬件服务以启用温度特征通知
+                    gatt.discoverServices();
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                     disconnectAndCloseGatt();
                     dashboardView.isSearchingCooler = true;
@@ -268,7 +260,67 @@ public class MainActivity extends Activity {
                 }
             });
         }
+
+        @Override
+        public void onServicesDiscovered(BluetoothGatt gatt, int status) {
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                BluetoothGattService service = gatt.getService(TARGET_SERVICE_UUID);
+                if (service != null) {
+                    BluetoothGattCharacteristic characteristic = service.getCharacteristic(TARGET_CHAR_UUID);
+                    if (characteristic != null) {
+                        gatt.setCharacteristicNotification(characteristic, true);
+                        BluetoothGattDescriptor descriptor = characteristic.getDescriptor(CCCD_UUID);
+                        if (descriptor != null) {
+                            descriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
+                            gatt.writeDescriptor(descriptor);
+                        }
+                    }
+                }
+            }
+        }
+
+        @Override
+        public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
+            // 解析来自硬件的实时温度与状态数据包
+            byte[] data = characteristic.getValue();
+            if (data != null && data.length > 0) {
+                // 假设硬件上报的第1-2位为冷面温度原始数据（可根据实际协议转换）
+                int rawTemp = data[0] & 0xFF;
+                float hardwareTemp = rawTemp * 0.5f + 5.0f; // 协议温感换算
+                mainHandler.post(() -> {
+                    if (dashboardView != null) {
+                        dashboardView.actualColdPlateTemp = hardwareTemp;
+                        dashboardView.postInvalidate();
+                    }
+                });
+            }
+        }
     };
+
+    /**
+     * 向硬件发送控制指令（开机/关机/切挡/调速）
+     */
+    public void sendCommandToCooler(int level) {
+        if (connectedGatt == null) return;
+        try {
+            BluetoothGattService service = connectedGatt.getService(TARGET_SERVICE_UUID);
+            if (service != null) {
+                BluetoothGattCharacteristic characteristic = service.getCharacteristic(TARGET_CHAR_UUID);
+                if (characteristic != null) {
+                    byte[] payload;
+                    if (level == 0) {
+                        // 关机 / 切断指令数据包
+                        payload = new byte[]{(byte) 0xAA, (byte) 0x00, (byte) 0x00};
+                    } else {
+                        // 开机 / 运行档位指令数据包 (带档位参数)
+                        payload = new byte[]{(byte) 0xAA, (byte) 0x01, (byte) level};
+                    }
+                    characteristic.setValue(payload);
+                    connectedGatt.writeCharacteristic(characteristic);
+                }
+            }
+        } catch (Throwable ignored) {}
+    }
 
     @Override
     protected void onDestroy() {
@@ -276,13 +328,10 @@ public class MainActivity extends Activity {
         stopCoolerScan();
         disconnectAndCloseGatt();
         mainHandler.removeCallbacksAndMessages(null);
-        try {
-            unregisterReceiver(batteryReceiver);
-        } catch (Throwable ignored) {}
     }
 
     public static class DashboardView extends View {
-        public float actualColdPlateTemp = 28.5f;
+        public float actualColdPlateTemp = 24.5f; // 由硬件实时上报反饋
         public int fanRpm = 5400;
         public int currentLevel = 3;
         public boolean isAmbientOn = true;
@@ -290,10 +339,6 @@ public class MainActivity extends Activity {
         public boolean isSearchingCooler = true;
         public String scanStatusText = "正在连接设备.";
         public String deviceNameStr = "未连接";
-
-        private float animTick = 0f;
-        private int dotCount = 1;
-        private long lastDotTime = 0;
 
         public int hapticStrength = 2;
         public boolean isHapticDialogVisible = false;
@@ -323,10 +368,6 @@ public class MainActivity extends Activity {
                 drawBleSearchOverlay(canvas, w, h);
                 return;
             }
-
-            animTick += 0.05f;
-            float naturalFluctuation = (float) Math.sin(animTick) * 0.12f;
-            float displayTemp = actualColdPlateTemp + naturalFluctuation;
 
             Paint bgPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
             Shader bgShader = new LinearGradient(
@@ -363,16 +404,17 @@ public class MainActivity extends Activity {
             paint.setStrokeWidth(dp(2f));
             canvas.drawLine(w / 2.0f, dp(100), w / 2.0f, dp(268), paint);
 
+            // 左表：硬件实时反馈的冷面温度
             float leftCx = w * 0.26f;
             float gaugeCy = dp(180);
             float gaugeR = dp(46);
-            drawGauge(canvas, leftCx, gaugeCy, gaugeR, 135, 220, Math.min(1.0f, displayTemp / 50.0f));
+            drawGauge(canvas, leftCx, gaugeCy, gaugeR, 135, 220, Math.min(1.0f, actualColdPlateTemp / 50.0f));
 
             textPaint.setTextAlign(Paint.Align.CENTER);
             textPaint.setColor(Color.parseColor("#0F172A"));
             textPaint.setTextSize(sp(26));
             textPaint.setTypeface(Typeface.DEFAULT_BOLD);
-            canvas.drawText(String.format(Locale.ROOT, "%.1f", displayTemp), leftCx - dp(6), gaugeCy + dp(6), textPaint);
+            canvas.drawText(String.format(Locale.ROOT, "%.1f", actualColdPlateTemp), leftCx - dp(6), gaugeCy + dp(6), textPaint);
 
             textPaint.setColor(Color.rgb(rgbRed, rgbGreen, rgbBlue));
             textPaint.setTextSize(sp(11));
@@ -383,6 +425,7 @@ public class MainActivity extends Activity {
             textPaint.setTypeface(Typeface.DEFAULT_BOLD);
             canvas.drawText("冷面实时温度", leftCx, gaugeCy + dp(22), textPaint);
 
+            // 右表：转速
             float rightCx = w * 0.74f;
             drawGauge(canvas, rightCx, gaugeCy, gaugeR, 45, -220, Math.min(1.0f, fanRpm / 7500.0f));
 
@@ -496,8 +539,6 @@ public class MainActivity extends Activity {
             if (isRgbDialogVisible) {
                 drawRgbSettingDialog(canvas, w, h);
             }
-
-            postInvalidateOnAnimation();
         }
 
         private void drawBleSearchOverlay(Canvas canvas, float w, float h) {
@@ -521,21 +562,8 @@ public class MainActivity extends Activity {
             RectF dlgRect = new RectF(dx, dy, dx + dw, dy + dh);
             drawGlassPanel(canvas, dlgRect, dp(28));
 
-            animTick += 0.04f;
-            float pulseR1 = dp(32) + (float)(Math.sin(animTick) * dp(6));
-            float pulseR2 = dp(52) + (float)(Math.cos(animTick) * dp(8));
-
             float radarCx = dlgRect.centerX();
             float radarCy = dy + dp(82);
-
-            paint.setStyle(Paint.Style.STROKE);
-            paint.setColor(Color.parseColor("#3000A0E9"));
-            paint.setStrokeWidth(dp(2f));
-            canvas.drawCircle(radarCx, radarCy, pulseR2, paint);
-
-            paint.setColor(Color.parseColor("#6000A0E9"));
-            paint.setStrokeWidth(dp(1.5f));
-            canvas.drawCircle(radarCx, radarCy, pulseR1, paint);
 
             paint.setStyle(Paint.Style.FILL);
             paint.setColor(Color.parseColor("#00A0E9"));
@@ -543,21 +571,11 @@ public class MainActivity extends Activity {
             paint.setColor(Color.WHITE);
             canvas.drawCircle(radarCx - dp(4), radarCy - dp(4), dp(4.5f), paint);
 
-            long now = System.currentTimeMillis();
-            if (now - lastDotTime > 450) {
-                dotCount = (dotCount % 3) + 1;
-                lastDotTime = now;
-            }
-            StringBuilder dots = new StringBuilder();
-            for (int i = 0; i < dotCount; i++) dots.append(".");
-
-            String displayText = "正在连接设备" + dots.toString();
-
             textPaint.setTextAlign(Paint.Align.CENTER);
             textPaint.setColor(Color.parseColor("#0F172A"));
             textPaint.setTextSize(sp(17.5f));
             textPaint.setTypeface(Typeface.DEFAULT_BOLD);
-            canvas.drawText(displayText, radarCx, dy + dp(156), textPaint);
+            canvas.drawText("正在连接设备...", radarCx, dy + dp(156), textPaint);
 
             textPaint.setColor(Color.parseColor("#64748B"));
             textPaint.setTextSize(sp(11.5f));
@@ -574,8 +592,6 @@ public class MainActivity extends Activity {
             textPaint.setTextSize(sp(13));
             textPaint.setTypeface(Typeface.DEFAULT_BOLD);
             canvas.drawText("重新扫描并连接", retryBtn.centerX(), retryBtn.centerY() + dp(4), textPaint);
-
-            postInvalidateOnAnimation();
         }
 
         private void drawHapticSettingDialog(Canvas canvas, float w, float h) {
@@ -644,7 +660,7 @@ public class MainActivity extends Activity {
             canvas.drawRect(0, 0, w, h, paint);
 
             float dw = w - dp(60);
-            float dh = dp(380); // 增加高度以容纳RGB滑动条
+            float dh = dp(380);
             float dx = dp(30);
             float dy = (h - dh) / 2.0f;
             RectF dlgRect = new RectF(dx, dy, dx + dw, dy + dh);
@@ -657,7 +673,6 @@ public class MainActivity extends Activity {
             textPaint.setTypeface(Typeface.DEFAULT_BOLD);
             canvas.drawText("RGB 氛围灯效色彩自定义", dx + dp(22), dy + dp(38), textPaint);
 
-            // 1. 保留原预设选项卡
             String[] presetNames = {"冰蓝座舱", "极光绿", "电竞烈红", "纯白流光"};
             int[][] presetColors = {
                     {0, 160, 233},
@@ -682,18 +697,13 @@ public class MainActivity extends Activity {
                 canvas.drawText(presetNames[i], pRect.centerX(), pRect.centerY() + dp(3), textPaint);
             }
 
-            // 2. 新增 RGB 自定义滑动调节条
             float sliderY = dy + dp(120);
             float sliderW = dw - dp(40);
             
-            // 红色滑动条
             drawColorSlider(canvas, dx + dp(20), sliderY, sliderW, "红 (R): " + rgbRed, rgbRed, Color.RED);
-            // 绿色滑动条
             drawColorSlider(canvas, dx + dp(20), sliderY + dp(45), sliderW, "绿 (G): " + rgbGreen, rgbGreen, Color.GREEN);
-            // 蓝色滑动条
             drawColorSlider(canvas, dx + dp(20), sliderY + dp(90), sliderW, "蓝 (B): " + rgbBlue, rgbBlue, Color.BLUE);
 
-            // 3. 当前混合色实时预览
             RectF previewRect = new RectF(dx + dp(20), dy + dp(270), dx + dw - dp(20), dy + dp(315));
             paint.setStyle(Paint.Style.FILL);
             paint.setColor(Color.rgb(rgbRed, rgbGreen, rgbBlue));
@@ -701,7 +711,6 @@ public class MainActivity extends Activity {
             textPaint.setColor((rgbRed * 0.299f + rgbGreen * 0.587f + rgbBlue * 0.114f) > 150 ? Color.BLACK : Color.WHITE);
             canvas.drawText("实时配色预览: RGB (" + rgbRed + ", " + rgbGreen + ", " + rgbBlue + ")", previewRect.centerX(), previewRect.centerY() + dp(4), textPaint);
 
-            // 4. 底部确认按钮
             RectF closeBtn = new RectF(dx + dp(20), dy + dh - dp(50), dx + dw - dp(20), dy + dh - dp(18));
             paint.setStyle(Paint.Style.FILL);
             paint.setColor(Color.rgb(rgbRed, rgbGreen, rgbBlue));
@@ -730,7 +739,6 @@ public class MainActivity extends Activity {
             paint.setColor(tintColor);
             canvas.drawRoundRect(progress, dp(4), dp(4), paint);
 
-            // 滑块圆点
             canvas.drawCircle(x + progressW, trackY + dp(4), dp(8), paint);
         }
 
@@ -845,7 +853,6 @@ public class MainActivity extends Activity {
                             return true;
                         }
 
-                        // 预设点击
                         float pW = (dw - dp(50)) / 4.0f;
                         float pY = dy + dp(60);
                         int[][] presetColors = {
@@ -868,7 +875,6 @@ public class MainActivity extends Activity {
                         }
                     }
 
-                    // 滑块拖动逻辑
                     float sliderY = dy + dp(120);
                     float sliderW = dw - dp(40);
                     float startX = dx + dp(20);
@@ -944,6 +950,7 @@ public class MainActivity extends Activity {
                 return true;
             }
 
+            // 大仪表盘触控选档逻辑（重写关机切断与开机重启指令下发）
             float dx = event.getX() - knobCx;
             float dy = event.getY() - knobCy;
             if (Math.sqrt(dx * dx + dy * dy) <= knobR) {
@@ -967,6 +974,12 @@ public class MainActivity extends Activity {
                     triggerHaptic(currentLevel == 0 || currentLevel == 4);
                     int[] rpms = {0, 2500, 3800, 5400, 7200, 4200};
                     fanRpm = rpms[currentLevel];
+
+                    // 向硬件发送控制指令：0代表关机切断散热，1-5代表开机及对应功率档位
+                    if (getContext() instanceof MainActivity) {
+                        ((MainActivity) getContext()).sendCommandToCooler(currentLevel);
+                    }
+
                     postInvalidate();
                 }
                 return true;
