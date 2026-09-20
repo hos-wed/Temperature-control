@@ -16,11 +16,7 @@ import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanResult;
 import android.bluetooth.le.ScanSettings;
 import android.content.Context;
-import android.content.Intent;
-import android.content.IntentFilter;
-import android.content.pm.PackageManager;
 import android.graphics.*;
-import android.os.BatteryManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -315,7 +311,6 @@ public class MainActivity extends Activity {
         mainHandler.removeCallbacksAndMessages(null);
     }
 
-    // 独立内部视图类
     public class DashboardView extends View {
         public float actualColdPlateTemp = 24.5f;
         public int fanRpm = 5400;
@@ -806,7 +801,9 @@ public class MainActivity extends Activity {
 
                     if (retryBtn.contains(event.getX(), event.getY())) {
                         triggerHaptic(false);
-                        startCoolerScan();
+                        if (getContext() instanceof MainActivity) {
+                            ((MainActivity) getContext()).startCoolerScan();
+                        }
                         return true;
                     }
                 }
@@ -956,7 +953,9 @@ public class MainActivity extends Activity {
                     int[] rpms = {0, 2500, 3800, 5400, 7200, 4200};
                     fanRpm = rpms[currentLevel];
 
-                    sendCommandToCooler(currentLevel);
+                    if (getContext() instanceof MainActivity) {
+                        ((MainActivity) getContext()).sendCommandToCooler(currentLevel);
+                    }
 
                     postInvalidate();
                 }
