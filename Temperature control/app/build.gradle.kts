@@ -33,19 +33,14 @@ android {
         jvmTarget = "1.8"
     }
 
-    // 核心强制指定：无论当前文件在哪个子目录下，强制将 src/main 下的所有子目录全量作为源码扫描！
     sourceSets {
         getByName("main") {
-            java.setSrcDirs(listOf(
-                "src/main/java",
-                "src/main",
-                "src/main/app/src/main/java",
-                "src/main/java/com/example/flydigicooler"
-            ))
+            java.srcDirs("src/main", "src/main/java")
+            kotlin.srcDirs("src/main", "src/main/java")
         }
     }
 }
 
 dependencies {
-    // 零外部依赖
+    // 零第三方依赖
 }
