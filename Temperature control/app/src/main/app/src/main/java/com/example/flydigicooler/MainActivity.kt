@@ -14,13 +14,13 @@ class MainActivity : Activity() {
         val rootLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setBackgroundColor(Color.parseColor("#F4F7FB")) // 纯白浅蓝主题底色
+            setBackgroundColor(Color.parseColor("#F4F7FB"))
         }
 
         val titleView = TextView(this).apply {
             text = "Temperature control"
             textSize = 22f
-            setTextColor(Color.parseColor("#0288D1")) // 冰蓝文字
+            setTextColor(Color.parseColor("#0288D1"))
             gravity = Gravity.CENTER
         }
 
