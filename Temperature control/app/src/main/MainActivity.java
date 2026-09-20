@@ -50,16 +50,6 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        Thread.setDefaultUncaughtExceptionHandler((thread, throwable) -> {
-            throwable.printStackTrace();
-            mainHandler.post(() -> {
-                if (dashboardView != null) {
-                    dashboardView.scanStatusText = "通信链路重连中...";
-                    dashboardView.postInvalidate();
-                }
-            });
-        });
-
         dashboardView = new DashboardView(this);
         setContentView(dashboardView);
 
@@ -267,10 +257,10 @@ public class MainActivity extends Activity {
                     BluetoothGattCharacteristic characteristic = service.getCharacteristic(TARGET_CHAR_UUID);
                     if (characteristic != null) {
                         gatt.setCharacteristicNotification(characteristic, true);
-                        BluetoothGattDescriptor characteristicDescriptor = characteristic.getDescriptor(CCCD_UUID);
-                        if (characteristicDescriptor != null) {
-                            characteristicDescriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
-                            gatt.writeDescriptor(characteristicDescriptor);
+                        BluetoothGattDescriptor descriptor = characteristic.getDescriptor(CCCD_UUID);
+                        if (descriptor != null) {
+                            descriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
+                            gatt.writeDescriptor(descriptor);
                         }
                     }
                 }
@@ -302,8 +292,10 @@ public class MainActivity extends Activity {
                 if (characteristic != null) {
                     byte[] payload;
                     if (level == 0) {
+                        // 关机切断散热指令
                         payload = new byte[]{(byte) 0xAA, (byte) 0x00, (byte) 0x00};
                     } else {
+                        // 开机启动与对应档位指令
                         payload = new byte[]{(byte) 0xAA, (byte) 0x01, (byte) level};
                     }
                     characteristic.setValue(payload);
@@ -321,7 +313,7 @@ public class MainActivity extends Activity {
         mainHandler.removeCallbacksAndMessages(null);
     }
 
-    // 将 DashboardView 作为内部类直接包含在 MainActivity 内部，确保包与文件命名绝对合规
+    // 内部独立视图类
     public class DashboardView extends View {
         public float actualColdPlateTemp = 24.5f;
         public int fanRpm = 5400;
@@ -812,9 +804,7 @@ public class MainActivity extends Activity {
 
                     if (retryBtn.contains(event.getX(), event.getY())) {
                         triggerHaptic(false);
-                        if (getContext() instanceof MainActivity) {
-                            ((MainActivity) getContext()).startCoolerScan();
-                        }
+                        startCoolerScan();
                         return true;
                     }
                 }
@@ -964,9 +954,7 @@ public class MainActivity extends Activity {
                     int[] rpms = {0, 2500, 3800, 5400, 7200, 4200};
                     fanRpm = rpms[currentLevel];
 
-                    if (getContext() instanceof MainActivity) {
-                        ((MainActivity) getContext()).sendCommandToCooler(currentLevel);
-                    }
+                    sendCommandToCooler(currentLevel);
 
                     postInvalidate();
                 }
