@@ -52,6 +52,10 @@ public class MainActivity extends Activity {
         public int currentLevel = 3;
         public boolean isAmbientOn = true;
 
+        // 震动触觉档位：0=关闭, 1=轻柔, 2=标准, 3=强劲
+        public int hapticStrength = 2;
+        public boolean isHapticDialogVisible = false;
+
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Vibrator vibrator;
@@ -79,7 +83,7 @@ public class MainActivity extends Activity {
             bgPaint.setShader(bgShader);
             canvas.drawRect(0, 0, w, h, bgPaint);
 
-            // 背景液态浅蓝微光光晕（散焦光斑）
+            // 背景液态浅蓝微光光晕
             paint.setStyle(Paint.Style.FILL);
             paint.setColor(Color.parseColor("#2538BDF8"));
             canvas.drawCircle(w * 0.2f, dp(150), dp(130), paint);
@@ -155,7 +159,6 @@ public class MainActivity extends Activity {
             float knobCy = dp(455);
             float knobR = dp(50);
 
-            // 旋钮大底座——折射玻璃圆盘
             RectF knobBase = new RectF(knobCx - dp(120), knobCy - dp(120), knobCx + dp(120), knobCy + dp(120));
             drawGlassPanel(canvas, knobBase, dp(120));
 
@@ -163,7 +166,6 @@ public class MainActivity extends Activity {
             String[] descs = {"关闭", "轻音", "日常", "电竞", "超频", "智冷"};
             float[] angles = {140f, 180f, 220f, 270f, 320f, 40f};
 
-            // 绘制刻度与发光液体小气泡
             for (int i = 0; i < 6; i++) {
                 double rad = Math.toRadians(angles[i]);
                 float lx = knobCx + (float) (dp(88) * Math.cos(rad));
@@ -172,7 +174,6 @@ public class MainActivity extends Activity {
                 boolean isSel = (i == currentLevel);
 
                 if (isSel) {
-                    // 当前档位：液态发光凝珠
                     paint.setStyle(Paint.Style.FILL);
                     paint.setColor(Color.parseColor("#4000A0E9"));
                     canvas.drawCircle(lx, ly - dp(16), dp(8), paint);
@@ -197,10 +198,8 @@ public class MainActivity extends Activity {
                 canvas.drawText(descs[i], lx, ly + dp(10), textPaint);
             }
 
-            // 旋钮核心水晶球体与金属棱镜环
             drawGlassOrbKnob(canvas, knobCx, knobCy, knobR, angles[currentLevel]);
 
-            // 中心大字数值显示
             textPaint.setColor(Color.parseColor("#0F172A"));
             textPaint.setTextSize(sp(19));
             textPaint.setTypeface(Typeface.DEFAULT_BOLD);
@@ -211,16 +210,17 @@ public class MainActivity extends Activity {
             textPaint.setTypeface(Typeface.DEFAULT);
             canvas.drawText("LEVEL", knobCx, knobCy + dp(12), textPaint);
 
-            // 阻尼触感玻璃胶囊标签
-            RectF capRect = new RectF(knobCx - dp(60), knobCy + dp(74), knobCx + dp(60), knobCy + dp(96));
-            drawGlassPanel(canvas, capRect, dp(11));
+            // 阻尼触感胶囊标签（点击弹出震动调节窗口）
+            RectF capRect = new RectF(knobCx - dp(70), knobCy + dp(74), knobCx + dp(70), knobCy + dp(98));
+            drawGlassPanel(canvas, capRect, dp(12));
 
+            String[] hapticNames = {"静音", "轻柔", "标准", "强劲"};
             textPaint.setColor(Color.parseColor("#0284C7"));
             textPaint.setTextSize(sp(9));
             textPaint.setTypeface(Typeface.DEFAULT_BOLD);
-            canvas.drawText("触控阻尼段落感", knobCx, knobCy + dp(88), textPaint);
+            canvas.drawText("⚙ 阻尼震感 · " + hapticNames[hapticStrength], knobCx, knobCy + dp(89), textPaint);
 
-            // 5. 底部 RGB 氛围灯【晶莹剔透玻璃开关】
+            // 5. 底部 RGB 氛围灯玻璃开关
             RectF btn = new RectF(dp(20), h - dp(90), w - dp(20), h - dp(40));
             drawGlassPanel(canvas, btn, dp(16));
 
@@ -248,13 +248,105 @@ public class MainActivity extends Activity {
             textPaint.setTextSize(sp(9.5f));
             textPaint.setTypeface(Typeface.DEFAULT);
             canvas.drawText(isAmbientOn ? "极光冰蓝呼吸流光生效中" : "已关闭灯效进入静默节电", dp(62), h - dp(54), textPaint);
+
+            // 6. 【悬浮液态玻璃——震动频率与强度调节窗口】
+            if (isHapticDialogVisible) {
+                drawHapticSettingDialog(canvas, w, h);
+            }
         }
 
         /**
-         * 绘制液态玻璃卡片（双层反光、边缘菲涅尔高光、折射渐变）
+         * 绘制弹出的液态玻璃震感调节窗
          */
+        private void drawHapticSettingDialog(Canvas canvas, float w, float h) {
+            // 背景暗色漫反射压暗
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.parseColor("#4D0A192F"));
+            canvas.drawRect(0, 0, w, h, paint);
+
+            // 调节窗主体
+            float dw = w - dp(60);
+            float dh = dp(230);
+            float dx = dp(30);
+            float dy = (h - dh) / 2.0f;
+            RectF dlgRect = new RectF(dx, dy, dx + dw, dy + dh);
+
+            // 窗体液态玻璃渲染
+            drawGlassPanel(canvas, dlgRect, dp(24));
+
+            // 标题栏
+            textPaint.setTextAlign(Paint.Align.LEFT);
+            textPaint.setColor(Color.parseColor("#0F2840"));
+            textPaint.setTextSize(sp(15));
+            textPaint.setTypeface(Typeface.DEFAULT_BOLD);
+            canvas.drawText("HAPTIC INTENSITY / 阻尼震感调节", dx + dp(20), dy + dp(36), textPaint);
+
+            textPaint.setColor(Color.parseColor("#64748B"));
+            textPaint.setTextSize(sp(10));
+            textPaint.setTypeface(Typeface.DEFAULT);
+            canvas.drawText("切换旋钮档位时的触控马达震动反馈", dx + dp(20), dy + dp(54), textPaint);
+
+            // 4个调节档位胶囊按钮
+            String[] levels = {"关断", "轻柔", "标准", "强劲"};
+            String[] subTexts = {"0% 无震感", "30% 细微", "70% 咔哒", "100% 重度"};
+            float itemW = (dw - dp(50)) / 4.0f;
+            float itemH = dp(75);
+            float itemY = dy + dp(76);
+
+            for (int i = 0; i < 4; i++) {
+                float itemX = dx + dp(20) + i * (itemW + dp(3.3f));
+                RectF itemRect = new RectF(itemX, itemY, itemX + itemW, itemY + itemH);
+
+                boolean isSelected = (hapticStrength == i);
+
+                // 选项玻璃胶囊
+                if (isSelected) {
+                    paint.setStyle(Paint.Style.FILL);
+                    paint.setColor(Color.parseColor("#DDF0F9FF"));
+                    canvas.drawRoundRect(itemRect, dp(14), dp(14), paint);
+
+                    paint.setStyle(Paint.Style.STROKE);
+                    paint.setColor(Color.parseColor("#0284C7"));
+                    paint.setStrokeWidth(dp(2));
+                    canvas.drawRoundRect(itemRect, dp(14), dp(14), paint);
+                } else {
+                    paint.setStyle(Paint.Style.FILL);
+                    paint.setColor(Color.parseColor("#50FFFFFF"));
+                    canvas.drawRoundRect(itemRect, dp(14), dp(14), paint);
+
+                    paint.setStyle(Paint.Style.STROKE);
+                    paint.setColor(Color.parseColor("#40CBD5E1"));
+                    paint.setStrokeWidth(dp(1));
+                    canvas.drawRoundRect(itemRect, dp(14), dp(14), paint);
+                }
+
+                // 选项文字
+                textPaint.setTextAlign(Paint.Align.CENTER);
+                textPaint.setColor(isSelected ? Color.parseColor("#0284C7") : Color.parseColor("#0F172A"));
+                textPaint.setTextSize(sp(13));
+                textPaint.setTypeface(Typeface.DEFAULT_BOLD);
+                canvas.drawText(levels[i], itemRect.centerX(), itemY + dp(30), textPaint);
+
+                textPaint.setColor(isSelected ? Color.parseColor("#0369A1") : Color.parseColor("#94A3B8"));
+                textPaint.setTextSize(sp(8));
+                textPaint.setTypeface(Typeface.DEFAULT);
+                canvas.drawText(subTexts[i], itemRect.centerX(), itemY + dp(50), textPaint);
+            }
+
+            // 底部“完成/关闭”液态胶囊按钮
+            RectF closeBtn = new RectF(dx + dp(20), dy + dh - dp(52), dx + dw - dp(20), dy + dh - dp(18));
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.parseColor("#00A0E9"));
+            canvas.drawRoundRect(closeBtn, dp(14), dp(14), paint);
+
+            textPaint.setTextAlign(Paint.Align.CENTER);
+            textPaint.setColor(Color.WHITE);
+            textPaint.setTextSize(sp(12));
+            textPaint.setTypeface(Typeface.DEFAULT_BOLD);
+            canvas.drawText("确定并保存触感", closeBtn.centerX(), closeBtn.centerY() + dp(4), textPaint);
+        }
+
         private void drawGlassPanel(Canvas canvas, RectF rect, float radius) {
-            // A. 底层液态漫反射填充（天青浅蓝微光至高透白）
             Paint fillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
             Shader fillShader = new LinearGradient(
                     rect.left, rect.top, rect.right, rect.bottom,
@@ -266,7 +358,6 @@ public class MainActivity extends Activity {
             fillPaint.setStyle(Paint.Style.FILL);
             canvas.drawRoundRect(rect, radius, radius, fillPaint);
 
-            // B. 顶面折射光泽弧面（模拟厚玻璃反光）
             Paint sheenPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
             Shader sheenShader = new LinearGradient(
                     rect.left, rect.top, rect.left, rect.top + rect.height() * 0.45f,
@@ -278,7 +369,6 @@ public class MainActivity extends Activity {
             sheenPaint.setStyle(Paint.Style.FILL);
             canvas.drawRoundRect(rect, radius, radius, sheenPaint);
 
-            // C. 玻璃物理边缘高光外圈（上亮下透）
             Paint strokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
             Shader strokeShader = new LinearGradient(
                     rect.left, rect.top, rect.right, rect.bottom,
@@ -292,11 +382,7 @@ public class MainActivity extends Activity {
             canvas.drawRoundRect(rect, radius, radius, strokePaint);
         }
 
-        /**
-         * 绘制液态水晶与合金旋钮
-         */
         private void drawGlassOrbKnob(Canvas canvas, float cx, float cy, float r, float angle) {
-            // 外圈磨砂金属与玻璃倒角
             Paint ringPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
             ringPaint.setStyle(Paint.Style.STROKE);
             ringPaint.setStrokeWidth(dp(3f));
@@ -308,7 +394,6 @@ public class MainActivity extends Activity {
             ringPaint.setShader(ringShader);
             canvas.drawCircle(cx, cy, r, ringPaint);
 
-            // 球体水晶盘面（向心液态渐变）
             Paint orbPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
             Shader orbShader = new RadialGradient(
                     cx - r * 0.3f, cy - r * 0.35f, r * 1.2f,
@@ -320,7 +405,6 @@ public class MainActivity extends Activity {
             orbPaint.setStyle(Paint.Style.FILL);
             canvas.drawCircle(cx, cy, r - dp(3.5f), orbPaint);
 
-            // 动态发光液滴指针
             double rad = Math.toRadians(angle);
             float startX = cx + (float) (dp(16) * Math.cos(rad));
             float startY = cy + (float) (dp(16) * Math.sin(rad));
@@ -334,7 +418,6 @@ public class MainActivity extends Activity {
             ptrPaint.setStrokeCap(Paint.Cap.ROUND);
             canvas.drawLine(startX, startY, endX, endY, ptrPaint);
 
-            // 指针尖端折射光点
             Paint tipPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
             tipPaint.setStyle(Paint.Style.FILL);
             tipPaint.setColor(Color.WHITE);
@@ -347,12 +430,10 @@ public class MainActivity extends Activity {
             paint.setStrokeCap(Paint.Cap.ROUND);
             paint.setShader(null);
 
-            // 晶莹浅灰底环
             paint.setColor(Color.parseColor("#30CBD5E1"));
             paint.setStrokeWidth(dp(6.5f));
             canvas.drawArc(rect, startAngle, sweep, false, paint);
 
-            // 液体光泽天青色进度环
             Paint progPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
             progPaint.setStyle(Paint.Style.STROKE);
             progPaint.setStrokeCap(Paint.Cap.ROUND);
@@ -369,16 +450,72 @@ public class MainActivity extends Activity {
 
         @Override
         public boolean onTouchEvent(MotionEvent event) {
-            float knobCx = getWidth() / 2.0f;
+            float w = getWidth();
+            float h = getHeight();
+            float knobCx = w / 2.0f;
             float knobCy = dp(455);
 
-            if (event.getAction() == MotionEvent.ACTION_DOWN && event.getY() > getHeight() - dp(90)) {
+            // 1. 如果弹窗处于打开状态，优先处理弹窗交互
+            if (isHapticDialogVisible) {
+                if (event.getAction() == MotionEvent.ACTION_DOWN) {
+                    float dw = w - dp(60);
+                    float dh = dp(230);
+                    float dx = dp(30);
+                    float dy = (h - dh) / 2.0f;
+
+                    // 点击弹窗外部：关闭弹窗
+                    if (event.getX() < dx || event.getX() > dx + dw || event.getY() < dy || event.getY() > dy + dh) {
+                        isHapticDialogVisible = false;
+                        invalidate();
+                        return true;
+                    }
+
+                    // 点击“确定”按钮
+                    RectF closeBtn = new RectF(dx + dp(20), dy + dh - dp(52), dx + dw - dp(20), dy + dh - dp(18));
+                    if (closeBtn.contains(event.getX(), event.getY())) {
+                        isHapticDialogVisible = false;
+                        triggerHaptic();
+                        invalidate();
+                        return true;
+                    }
+
+                    // 点击4个档位项
+                    float itemW = (dw - dp(50)) / 4.0f;
+                    float itemH = dp(75);
+                    float itemY = dy + dp(76);
+
+                    for (int i = 0; i < 4; i++) {
+                        float itemX = dx + dp(20) + i * (itemW + dp(3.3f));
+                        RectF itemRect = new RectF(itemX, itemY, itemX + itemW, itemY + itemH);
+                        if (itemRect.contains(event.getX(), event.getY())) {
+                            hapticStrength = i;
+                            triggerHaptic(); // 切换时立即实测触感
+                            invalidate();
+                            return true;
+                        }
+                    }
+                }
+                return true;
+            }
+
+            // 2. 点击“触控阻尼胶囊”弹出震动设置窗口
+            RectF capRect = new RectF(knobCx - dp(70), knobCy + dp(74), knobCx + dp(70), knobCy + dp(98));
+            if (event.getAction() == MotionEvent.ACTION_DOWN && capRect.contains(event.getX(), event.getY())) {
+                isHapticDialogVisible = true;
+                triggerHaptic();
+                invalidate();
+                return true;
+            }
+
+            // 3. 点击底部 RGB 氛围灯
+            if (event.getAction() == MotionEvent.ACTION_DOWN && event.getY() > h - dp(90)) {
                 isAmbientOn = !isAmbientOn;
                 triggerHaptic();
                 invalidate();
                 return true;
             }
 
+            // 4. 旋钮滑动与选档
             float dx = event.getX() - knobCx;
             float dy = event.getY() - knobCy;
             if (Math.sqrt(dx * dx + dy * dy) <= dp(130)) {
@@ -409,14 +546,37 @@ public class MainActivity extends Activity {
             return super.onTouchEvent(event);
         }
 
+        /**
+         * 多档位马达触控震动调节
+         */
         private void triggerHaptic() {
+            if (hapticStrength == 0 || vibrator == null) return;
+
+            // 根据设置的强度动态调节震动时长与震动幅度
+            int duration;
+            int amplitude;
+
+            switch (hapticStrength) {
+                case 1: // 轻柔
+                    duration = 8;
+                    amplitude = 60;
+                    break;
+                case 3: // 强劲
+                    duration = 24;
+                    amplitude = 255;
+                    break;
+                case 2: // 标准
+                default:
+                    duration = 14;
+                    amplitude = 150;
+                    break;
+            }
+
             performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK);
-            if (vibrator != null) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    vibrator.vibrate(VibrationEffect.createOneShot(15, 120));
-                } else {
-                    vibrator.vibrate(15);
-                }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator.vibrate(VibrationEffect.createOneShot(duration, amplitude));
+            } else {
+                vibrator.vibrate(duration);
             }
         }
 
