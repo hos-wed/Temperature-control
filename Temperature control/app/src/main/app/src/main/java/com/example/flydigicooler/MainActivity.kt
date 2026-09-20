@@ -18,7 +18,7 @@ class MainActivity : ComponentActivity() {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     Box(contentAlignment = Alignment.Center) {
-                        Text(text = "飞智散热控制已就绪")
+                        Text(text = "Temperature control")
                     }
                 }
             }
