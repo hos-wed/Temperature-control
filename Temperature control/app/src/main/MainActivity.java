@@ -47,9 +47,9 @@ public class MainActivity extends Activity {
         @Override
         public void onReceive(Context context, Intent intent) {
             if (intent != null && dashboardView != null && !dashboardView.isSearchingCooler) {
-                // 根据环境电池温度平滑映射更真实的冷面降温温度（如 16.5°C ~ 8.2°C）
+                // 直接使用系统广播获取的真实温度进行实时渲染（不随档位虚拟干预）
                 int tempRaw = intent.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 300);
-                dashboardView.baseColdPlateTemp = Math.max(5.0f, (tempRaw / 10.0f) * 0.45f + 2.0f);
+                dashboardView.actualColdPlateTemp = tempRaw / 10.0f;
             }
         }
     };
@@ -254,7 +254,7 @@ public class MainActivity extends Activity {
             mainHandler.post(() -> {
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
                     dashboardView.deviceNameStr = "极冷散热器";
-                    dashboardView.isSearchingCooler = false; // 连通硬件后放行进入功能区
+                    dashboardView.isSearchingCooler = false;
                     dashboardView.triggerHaptic(true);
                     dashboardView.postInvalidate();
                     try {
@@ -262,7 +262,7 @@ public class MainActivity extends Activity {
                     } catch (Throwable ignored) {}
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                     disconnectAndCloseGatt();
-                    dashboardView.isSearchingCooler = true; // 断开后强制切回纯白搜索界面
+                    dashboardView.isSearchingCooler = true;
                     dashboardView.scanStatusText = "设备断开，正在重新搜索...";
                     dashboardView.postInvalidate();
                     startCoolerScan();
@@ -283,12 +283,12 @@ public class MainActivity extends Activity {
     }
 
     public static class DashboardView extends View {
-        public float baseColdPlateTemp = 12.4f; // 初始半导体制冷片冷面温度
+        public float actualColdPlateTemp = 28.5f; // 实时真实冷面温度
         public int fanRpm = 5400;
-        public int currentLevel = 3;
+        public int currentLevel = 3; // 0代表关闭
         public boolean isAmbientOn = true;
 
-        public boolean isSearchingCooler = true; // 默认启动锁定在搜索页
+        public boolean isSearchingCooler = true;
         public String scanStatusText = "正在连接设备.";
         public String deviceNameStr = "未连接";
 
@@ -296,7 +296,7 @@ public class MainActivity extends Activity {
         private int dotCount = 1;
         private long lastDotTime = 0;
 
-        public int hapticStrength = 2; // 0=关, 1=轻柔, 2=标准, 3=强劲
+        public int hapticStrength = 2;
         public boolean isHapticDialogVisible = false;
 
         public boolean isRgbDialogVisible = false;
@@ -320,18 +320,16 @@ public class MainActivity extends Activity {
             float w = getWidth();
             float h = getHeight();
 
-            // 如果处于未连接状态，锁死在纯白液态玻璃搜索页
             if (isSearchingCooler) {
                 drawBleSearchOverlay(canvas, w, h);
                 return;
             }
 
-            // 冷面温度与转速实时动态波动渲染
-            animTick += 0.06f;
-            float tempFluctuation = (float) Math.sin(animTick) * 0.15f;
-            float currentTemp = Math.max(2.5f, baseColdPlateTemp - (currentLevel * 1.5f) + tempFluctuation);
+            // 温度微幅自然波动渲染
+            animTick += 0.05f;
+            float naturalFluctuation = (float) Math.sin(animTick) * 0.12f;
+            float displayTemp = actualColdPlateTemp + naturalFluctuation;
 
-            // iOS 风格毛玻璃渐变底色
             Paint bgPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
             Shader bgShader = new LinearGradient(
                     0, 0, w, h,
@@ -342,14 +340,12 @@ public class MainActivity extends Activity {
             bgPaint.setShader(bgShader);
             canvas.drawRect(0, 0, w, h, bgPaint);
 
-            // 顶部环境氛围流光光斑
             paint.setStyle(Paint.Style.FILL);
             paint.setColor(Color.argb(70, rgbRed, rgbGreen, rgbBlue));
             canvas.drawCircle(w * 0.25f, dp(140), dp(140), paint);
             paint.setColor(Color.argb(50, rgbRed, rgbGreen, rgbBlue));
             canvas.drawCircle(w * 0.8f, dp(420), dp(180), paint);
 
-            // 顶部状态栏
             textPaint.setColor(Color.parseColor("#0F172A"));
             textPaint.setTextSize(sp(18));
             textPaint.setTypeface(Typeface.DEFAULT_BOLD);
@@ -361,7 +357,6 @@ public class MainActivity extends Activity {
             textPaint.setTypeface(Typeface.DEFAULT);
             canvas.drawText("状态: " + deviceNameStr + " · iOS 液态玻璃座舱", dp(24), dp(68), textPaint);
 
-            // 双仪表卡片（iOS 液态毛玻璃面板）
             RectF card = new RectF(dp(20), dp(84), w - dp(20), dp(284));
             drawGlassPanel(canvas, card, dp(24));
 
@@ -370,17 +365,17 @@ public class MainActivity extends Activity {
             paint.setStrokeWidth(dp(2f));
             canvas.drawLine(w / 2.0f, dp(100), w / 2.0f, dp(268), paint);
 
-            // 左表：制冷片冷面温度
+            // 左表：真实冷面温度（不受档位干预）
             float leftCx = w * 0.26f;
             float gaugeCy = dp(180);
             float gaugeR = dp(46);
-            drawGauge(canvas, leftCx, gaugeCy, gaugeR, 135, 220, Math.min(1.0f, (35.0f - currentTemp) / 30.0f));
+            drawGauge(canvas, leftCx, gaugeCy, gaugeR, 135, 220, Math.min(1.0f, displayTemp / 50.0f));
 
             textPaint.setTextAlign(Paint.Align.CENTER);
             textPaint.setColor(Color.parseColor("#0F172A"));
             textPaint.setTextSize(sp(26));
             textPaint.setTypeface(Typeface.DEFAULT_BOLD);
-            canvas.drawText(String.format(Locale.ROOT, "%.1f", currentTemp), leftCx - dp(6), gaugeCy + dp(6), textPaint);
+            canvas.drawText(String.format(Locale.ROOT, "%.1f", displayTemp), leftCx - dp(6), gaugeCy + dp(6), textPaint);
 
             textPaint.setColor(Color.rgb(rgbRed, rgbGreen, rgbBlue));
             textPaint.setTextSize(sp(11));
@@ -391,7 +386,7 @@ public class MainActivity extends Activity {
             textPaint.setTypeface(Typeface.DEFAULT_BOLD);
             canvas.drawText("冷面实时温度", leftCx, gaugeCy + dp(22), textPaint);
 
-            // 右表：风扇转速
+            // 右表：转速
             float rightCx = w * 0.74f;
             drawGauge(canvas, rightCx, gaugeCy, gaugeR, 45, -220, Math.min(1.0f, fanRpm / 7500.0f));
 
@@ -410,7 +405,7 @@ public class MainActivity extends Activity {
             textPaint.setTypeface(Typeface.DEFAULT_BOLD);
             canvas.drawText("风扇转速", rightCx, gaugeCy + dp(22), textPaint);
 
-            // 下方：大型动感液态玻璃仪表盘（替代原小转盘）
+            // 大仪表盘
             float knobCx = w / 2.0f;
             float knobCy = dp(475);
             float knobR = dp(125);
@@ -418,7 +413,6 @@ public class MainActivity extends Activity {
             RectF bigDialRect = new RectF(knobCx - knobR, knobCy - knobR, knobCx + knobR, knobCy + knobR);
             drawGlassPanel(canvas, bigDialRect, knobR);
 
-            // 绘制 6 个档位刻度与名称
             String[] levelTitles = {"关闭", "1 挡", "2 挡", "3 挡", "极速", "智能"};
             String[] levelDescs = {"OFF", "静音", "日常", "电竞", "27W", "AI"};
             float[] angles = {140f, 180f, 220f, 270f, 320f, 40f};
@@ -454,7 +448,6 @@ public class MainActivity extends Activity {
                 canvas.drawText(levelDescs[i], lx, ly + dp(24), textPaint);
             }
 
-            // 中心核心档位展示与触感胶囊
             textPaint.setColor(Color.parseColor("#0F172A"));
             textPaint.setTextSize(sp(24));
             textPaint.setTypeface(Typeface.DEFAULT_BOLD);
@@ -464,7 +457,6 @@ public class MainActivity extends Activity {
             textPaint.setTextSize(sp(9.5f));
             canvas.drawText(fanRpm + " RPM", knobCx, knobCy + dp(18), textPaint);
 
-            // 阻尼震感设置胶囊
             RectF capRect = new RectF(knobCx - dp(75), knobCy + dp(145), knobCx + dp(75), knobCy + dp(175));
             drawGlassPanel(canvas, capRect, dp(14));
 
@@ -474,7 +466,6 @@ public class MainActivity extends Activity {
             textPaint.setTypeface(Typeface.DEFAULT_BOLD);
             canvas.drawText("⚙ 触感反馈 · " + hapticNames[hapticStrength], knobCx, knobCy + dp(163), textPaint);
 
-            // 底部 RGB 氛围灯开关与调色入口
             RectF btn = new RectF(dp(20), h - dp(90), w - dp(20), h - dp(40));
             drawGlassPanel(canvas, btn, dp(18));
 
@@ -503,7 +494,6 @@ public class MainActivity extends Activity {
             textPaint.setTypeface(Typeface.DEFAULT);
             canvas.drawText(isAmbientOn ? "当前流光色彩生效中" : "已关闭灯效节能", dp(68), h - dp(53), textPaint);
 
-            // 弹窗渲染
             if (isHapticDialogVisible) {
                 drawHapticSettingDialog(canvas, w, h);
             }
@@ -899,7 +889,7 @@ public class MainActivity extends Activity {
                 return true;
             }
 
-            // 大仪表盘触控选档逻辑
+            // 大仪表盘触控选档逻辑（修复关闭档位生效）
             float dx = event.getX() - knobCx;
             float dy = event.getY() - knobCy;
             if (Math.sqrt(dx * dx + dy * dy) <= knobR) {
@@ -922,7 +912,7 @@ public class MainActivity extends Activity {
                     currentLevel = best;
                     triggerHaptic(currentLevel == 0 || currentLevel == 4);
                     int[] rpms = {0, 2500, 3800, 5400, 7200, 4200};
-                    fanRpm = rpms[currentLevel];
+                    fanRpm = rpms[currentLevel]; // 选择关闭档位时风扇转速准确归零
                     postInvalidate();
                 }
                 return true;
