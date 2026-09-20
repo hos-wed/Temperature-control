@@ -32,8 +32,20 @@ android {
     kotlinOptions {
         jvmTarget = "1.8"
     }
+
+    // 核心强制指定：无论当前文件在哪个子目录下，强制将 src/main 下的所有子目录全量作为源码扫描！
+    sourceSets {
+        getByName("main") {
+            java.setSrcDirs(listOf(
+                "src/main/java",
+                "src/main",
+                "src/main/app/src/main/java",
+                "src/main/java/com/example/flydigicooler"
+            ))
+        }
+    }
 }
 
 dependencies {
-    // 零外部依赖：纯净原生系统运行时，杜绝第三方隐式 Provider 导致的启动闪退
+    // 零外部依赖
 }
