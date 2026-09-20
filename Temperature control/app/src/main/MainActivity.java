@@ -33,7 +33,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
 
-public class MainActivity extends Activity {
+public class MainActivity extends Activity implements MainActivity.OnCoolerActionListener {
 
     private DashboardView dashboardView;
     private BluetoothAdapter bluetoothAdapter;
@@ -45,6 +45,21 @@ public class MainActivity extends Activity {
     private static final UUID TARGET_SERVICE_UUID = UUID.fromString("0000ffe0-0000-1000-8000-00805f9b34fb");
     private static final UUID TARGET_CHAR_UUID = UUID.fromString("0000ffe1-0000-1000-8000-00805f9b34fb");
     private static final UUID CCCD_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
+
+    public interface OnCoolerActionListener {
+        void onScanRequested();
+        void onLevelChanged(int level);
+    }
+
+    @Override
+    public void onScanRequested() {
+        startCoolerScan();
+    }
+
+    @Override
+    public void onLevelChanged(int level) {
+        sendCommandToCooler(level);
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -60,7 +75,7 @@ public class MainActivity extends Activity {
             });
         });
 
-        dashboardView = new DashboardView(this);
+        dashboardView = new DashboardView(this, this);
         setContentView(dashboardView);
 
         initBleAndRequestPermissions();
@@ -302,10 +317,8 @@ public class MainActivity extends Activity {
                 if (characteristic != null) {
                     byte[] payload;
                     if (level == 0) {
-                        // 关机指令：切断制冷与风扇
                         payload = new byte[]{(byte) 0xAA, (byte) 0x00, (byte) 0x00};
                     } else {
-                        // 开机启动与对应档位指令
                         payload = new byte[]{(byte) 0xAA, (byte) 0x01, (byte) level};
                     }
                     characteristic.setValue(payload);
@@ -341,13 +354,15 @@ public class MainActivity extends Activity {
         public int rgbGreen = 160;
         public int rgbBlue = 233;
 
+        private final OnCoolerActionListener actionListener;
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Vibrator vibrator;
 
-        public DashboardView(Context context) {
+        public DashboardView(Context context, OnCoolerActionListener listener) {
             super(context);
             setClickable(true);
+            this.actionListener = listener;
             vibrator = (Vibrator) context.getSystemService(Context.VIBRATOR_SERVICE);
         }
 
@@ -813,8 +828,8 @@ public class MainActivity extends Activity {
 
                     if (retryBtn.contains(event.getX(), event.getY())) {
                         triggerHaptic(false);
-                        if (getContext() instanceof MainActivity) {
-                            ((MainActivity) getContext()).startCoolerScan();
+                        if (actionListener != null) {
+                            actionListener.onScanRequested();
                         }
                         return true;
                     }
@@ -965,10 +980,8 @@ public class MainActivity extends Activity {
                     int[] rpms = {0, 2500, 3800, 5400, 7200, 4200};
                     fanRpm = rpms[currentLevel];
 
-                    // 通过安全实例调用外部 Activity 的硬件指令下发通道
-                    Context ctx = getContext();
-                    if (ctx instanceof MainActivity) {
-                        ((MainActivity) ctx).sendCommandToCooler(currentLevel);
+                    if (actionListener != null) {
+                        actionListener.onLevelChanged(currentLevel);
                     }
 
                     postInvalidate();
