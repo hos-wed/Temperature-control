@@ -36,7 +36,7 @@ public class MainActivity extends Activity {
     private BluetoothAdapter bluetoothAdapter;
     private BluetoothLeScanner bleScanner;
     private BluetoothGatt connectedGatt;
-    private final Handler handler = new Handler(Looper.getMainLooper());
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private boolean isScanning = false;
 
     private final BroadcastReceiver batteryReceiver = new BroadcastReceiver() {
@@ -46,7 +46,7 @@ public class MainActivity extends Activity {
                 int tempRaw = intent.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0);
                 if (tempRaw > 0 && dashboardView != null) {
                     dashboardView.phoneTemp = tempRaw / 10.0f;
-                    dashboardView.invalidate();
+                    dashboardView.postInvalidate();
                 }
             }
         }
@@ -55,19 +55,38 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        // 全局未捕获异常保护，避免静默秒退
+        Thread.setDefaultUncaughtExceptionHandler((thread, throwable) -> {
+            throwable.printStackTrace();
+            mainHandler.post(() -> {
+                if (dashboardView != null) {
+                    dashboardView.scanStatus = "连接异常: " + throwable.getClass().getSimpleName();
+                    dashboardView.postInvalidate();
+                }
+            });
+        });
+
         dashboardView = new DashboardView(this);
         setContentView(dashboardView);
 
-        registerReceiver(batteryReceiver, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+        try {
+            registerReceiver(batteryReceiver, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+        } catch (Exception ignored) {}
 
         initBleAndRequestPermissions();
     }
 
     private void initBleAndRequestPermissions() {
-        bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
+        try {
+            bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
+        } catch (Exception e) {
+            bluetoothAdapter = null;
+        }
+
         if (bluetoothAdapter == null) {
-            dashboardView.scanStatus = "设备不支持低功耗蓝牙";
-            dashboardView.invalidate();
+            dashboardView.scanStatus = "设备不支持蓝牙服务";
+            dashboardView.postInvalidate();
             return;
         }
 
@@ -88,42 +107,60 @@ public class MainActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == 101 && grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            startCoolerScan();
-        } else {
-            dashboardView.scanStatus = "请授予蓝牙权限以继续";
-            dashboardView.invalidate();
+        if (requestCode == 101) {
+            boolean allGranted = true;
+            for (int res : grantResults) {
+                if (res != PackageManager.PERMISSION_GRANTED) {
+                    allGranted = false;
+                    break;
+                }
+            }
+            if (allGranted) {
+                startCoolerScan();
+            } else {
+                dashboardView.scanStatus = "未授予蓝牙/附近设备权限";
+                dashboardView.postInvalidate();
+            }
         }
     }
 
     public void startCoolerScan() {
         if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled()) {
             dashboardView.scanStatus = "请开启系统蓝牙后重试";
-            dashboardView.invalidate();
+            dashboardView.postInvalidate();
             return;
         }
 
-        bleScanner = bluetoothAdapter.getBluetoothLeScanner();
+        try {
+            bleScanner = bluetoothAdapter.getBluetoothLeScanner();
+        } catch (Exception e) {
+            bleScanner = null;
+        }
+
         if (bleScanner == null) {
-            dashboardView.scanStatus = "蓝牙扫描服务启动失败";
-            dashboardView.invalidate();
+            dashboardView.scanStatus = "蓝牙扫描器初始化失败";
+            dashboardView.postInvalidate();
             return;
         }
 
         isScanning = true;
         dashboardView.isSearchingCooler = true;
         dashboardView.scanStatus = "正在连接设备.";
-        dashboardView.invalidate();
+        dashboardView.postInvalidate();
 
         try {
             bleScanner.startScan(scanCallback);
-        } catch (SecurityException ignored) {}
+        } catch (Throwable t) {
+            dashboardView.scanStatus = "扫描启动受限，可点击直接进入";
+            dashboardView.postInvalidate();
+            return;
+        }
 
-        handler.postDelayed(() -> {
+        mainHandler.postDelayed(() -> {
             if (isScanning) {
                 stopCoolerScan();
-                dashboardView.scanStatus = "未检测到可用设备，请确认设备已通电";
-                dashboardView.invalidate();
+                dashboardView.scanStatus = "未检索到设备，可点击直接进入";
+                dashboardView.postInvalidate();
             }
         }, 15000);
     }
@@ -132,7 +169,7 @@ public class MainActivity extends Activity {
         if (isScanning && bleScanner != null) {
             try {
                 bleScanner.stopScan(scanCallback);
-            } catch (SecurityException ignored) {}
+            } catch (Throwable ignored) {}
             isScanning = false;
         }
     }
@@ -141,16 +178,30 @@ public class MainActivity extends Activity {
         @Override
         public void onScanResult(int callbackType, ScanResult result) {
             super.onScanResult(callbackType, result);
-            BluetoothDevice device = result.getDevice();
+            if (result == null || result.getDevice() == null) return;
+
+            final BluetoothDevice device = result.getDevice();
             String name = null;
+
             try {
-                name = device.getName();
-            } catch (SecurityException ignored) {}
+                // 部分设备获取设备名会触发 SecurityException
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    if (checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
+                        name = device.getName();
+                    }
+                } else {
+                    name = device.getName();
+                }
+            } catch (Throwable ignored) {}
+
+            // 也支持从广播记录中匹配
+            if (name == null && result.getScanRecord() != null) {
+                name = result.getScanRecord().getDeviceName();
+            }
 
             if (name == null || name.trim().isEmpty()) return;
 
             String upper = name.toUpperCase(Locale.ROOT);
-            // 后台静默匹配目标散热器硬件标识，前端不展示敏感品牌词
             if (upper.contains("B6X") || upper.contains("B7X") || upper.contains("B8X") || upper.contains("B9X")
                     || upper.contains("FLYDIGI") || upper.contains("B6") || upper.contains("B7")) {
                 stopCoolerScan();
@@ -160,31 +211,46 @@ public class MainActivity extends Activity {
     };
 
     private void connectToCooler(BluetoothDevice device) {
-        dashboardView.scanStatus = "正在建立通信连接...";
-        dashboardView.invalidate();
+        mainHandler.post(() -> {
+            dashboardView.scanStatus = "正在建立通信连接...";
+            dashboardView.postInvalidate();
+        });
 
         try {
-            connectedGatt = device.connectGatt(this, false, new BluetoothGattCallback() {
-                @Override
-                public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
-                    if (newState == BluetoothProfile.STATE_CONNECTED) {
-                        runOnUiThread(() -> {
-                            dashboardView.connectedDeviceName = "COOLER UNIT";
-                            dashboardView.isSearchingCooler = false; // 连通放行进入主界面
-                            dashboardView.triggerHaptic(true);
-                            dashboardView.invalidate();
-                            Toast.makeText(MainActivity.this, "设备已连接", Toast.LENGTH_SHORT).show();
-                        });
-                    } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                        runOnUiThread(() -> {
-                            dashboardView.scanStatus = "连接中断，点击重新连接";
-                            dashboardView.invalidate();
-                        });
-                    }
+            // Android 7.0+ 推荐使用带 TRANSPORT_LE 的连接方式以保证兼容性与防崩
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                connectedGatt = device.connectGatt(getApplicationContext(), false, gattCallback, BluetoothDevice.TRANSPORT_LE);
+            } else {
+                connectedGatt = device.connectGatt(getApplicationContext(), false, gattCallback);
+            }
+        } catch (Throwable t) {
+            mainHandler.post(() -> {
+                dashboardView.scanStatus = "通信握手失败，点击直接进入";
+                dashboardView.postInvalidate();
+            });
+        }
+    }
+
+    private final BluetoothGattCallback gattCallback = new BluetoothGattCallback() {
+        @Override
+        public void onConnectionStateChange(final BluetoothGatt gatt, int status, int newState) {
+            // 必须全部切回主线程执行任何状态更新
+            mainHandler.post(() -> {
+                if (newState == BluetoothProfile.STATE_CONNECTED) {
+                    dashboardView.connectedDeviceName = "COOLER UNIT";
+                    dashboardView.isSearchingCooler = false;
+                    dashboardView.triggerHaptic(true);
+                    dashboardView.postInvalidate();
+                    try {
+                        Toast.makeText(getApplicationContext(), "设备已连接", Toast.LENGTH_SHORT).show();
+                    } catch (Throwable ignored) {}
+                } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                    dashboardView.scanStatus = "连接已断开，点击重新连接";
+                    dashboardView.postInvalidate();
                 }
             });
-        } catch (SecurityException ignored) {}
-    }
+        }
+    };
 
     @Override
     protected void onDestroy() {
@@ -192,10 +258,13 @@ public class MainActivity extends Activity {
         stopCoolerScan();
         if (connectedGatt != null) {
             try {
+                connectedGatt.disconnect();
                 connectedGatt.close();
-            } catch (SecurityException ignored) {}
+            } catch (Throwable ignored) {}
         }
-        unregisterReceiver(batteryReceiver);
+        try {
+            unregisterReceiver(batteryReceiver);
+        } catch (Throwable ignored) {}
     }
 
     public static class DashboardView extends View {
@@ -204,17 +273,14 @@ public class MainActivity extends Activity {
         public int currentLevel = 3;
         public boolean isAmbientOn = true;
 
-        // 蓝牙扫描与放行状态
         public boolean isSearchingCooler = true;
         public String scanStatus = "正在连接设备.";
         public String connectedDeviceName = "未连接";
 
-        // 动画流转帧计数器
         private float animTick = 0f;
         private int dotCount = 1;
         private long lastDotTime = 0;
 
-        // 震动档位：0=关, 1=轻柔, 2=标准, 3=强劲
         public int hapticStrength = 2;
         public boolean isHapticDialogVisible = false;
 
@@ -234,7 +300,7 @@ public class MainActivity extends Activity {
             float w = getWidth();
             float h = getHeight();
 
-            // 1. 底层冷感流体背景
+            // 1. 底层流体冷白背景
             Paint bgPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
             Shader bgShader = new LinearGradient(
                     0, 0, w, h,
@@ -245,14 +311,13 @@ public class MainActivity extends Activity {
             bgPaint.setShader(bgShader);
             canvas.drawRect(0, 0, w, h, bgPaint);
 
-            // 背景液态浅蓝光晕
             paint.setStyle(Paint.Style.FILL);
             paint.setColor(Color.parseColor("#2538BDF8"));
             canvas.drawCircle(w * 0.2f, dp(150), dp(130), paint);
             paint.setColor(Color.parseColor("#180288D1"));
             canvas.drawCircle(w * 0.85f, dp(460), dp(160), paint);
 
-            // 2. 顶部状态栏标题
+            // 2. 标题栏
             textPaint.setColor(Color.parseColor("#0F2840"));
             textPaint.setTextSize(sp(18));
             textPaint.setTypeface(Typeface.DEFAULT_BOLD);
@@ -264,7 +329,7 @@ public class MainActivity extends Activity {
             textPaint.setTypeface(Typeface.DEFAULT);
             canvas.drawText("DEVICE: " + connectedDeviceName + " · 极冷座舱", dp(24), dp(68), textPaint);
 
-            // 3. 双仪表盘液态玻璃卡片
+            // 3. 仪表盘卡片
             RectF card = new RectF(dp(20), dp(84), w - dp(20), dp(284));
             drawGlassPanel(canvas, card, dp(22));
 
@@ -276,7 +341,7 @@ public class MainActivity extends Activity {
             paint.setStrokeWidth(dp(1f));
             canvas.drawLine(w / 2.0f + dp(1), dp(100), w / 2.0f + dp(1), dp(268), paint);
 
-            // 3.1 左仪表：手机核心温度
+            // 3.1 左表：温度
             float leftCx = w * 0.26f;
             float gaugeCy = dp(180);
             float gaugeR = dp(46);
@@ -297,7 +362,7 @@ public class MainActivity extends Activity {
             textPaint.setTypeface(Typeface.DEFAULT_BOLD);
             canvas.drawText("PHONE TEMP", leftCx, gaugeCy + dp(22), textPaint);
 
-            // 3.2 右仪表：散热风扇转速
+            // 3.2 右表：转速
             float rightCx = w * 0.74f;
             drawGauge(canvas, rightCx, gaugeCy, gaugeR, 45, -220, Math.min(1.0f, fanRpm / 7500.0f));
 
@@ -315,7 +380,7 @@ public class MainActivity extends Activity {
             textPaint.setTextSize(sp(9));
             canvas.drawText("FAN SPEED", rightCx, gaugeCy + dp(22), textPaint);
 
-            // 4. 水滴拟态液态玻璃旋钮系统
+            // 4. 旋钮
             float knobCx = w / 2.0f;
             float knobCy = dp(455);
             float knobR = dp(50);
@@ -409,20 +474,17 @@ public class MainActivity extends Activity {
             textPaint.setTypeface(Typeface.DEFAULT);
             canvas.drawText(isAmbientOn ? "极光冰蓝呼吸流光生效中" : "已关闭灯效进入静默节电", dp(62), h - dp(54), textPaint);
 
-            // 6. 弹出的震感设置窗口
+            // 6. 震动调节弹窗
             if (isHapticDialogVisible) {
                 drawHapticSettingDialog(canvas, w, h);
             }
 
-            // 7. 【动态“正在连接设备.”无任何敏感提示词的雷达检索窗口】
+            // 7. 设备连接弹窗
             if (isSearchingCooler) {
                 drawBleSearchOverlay(canvas, w, h);
             }
         }
 
-        /**
-         * 动态正在连接设备雷达动画窗口（无任何品牌或型号词）
-         */
         private void drawBleSearchOverlay(Canvas canvas, float w, float h) {
             paint.setStyle(Paint.Style.FILL);
             paint.setColor(Color.parseColor("#550A192F"));
@@ -435,7 +497,6 @@ public class MainActivity extends Activity {
             RectF dlgRect = new RectF(dx, dy, dx + dw, dy + dh);
             drawGlassPanel(canvas, dlgRect, dp(26));
 
-            // 雷达脉冲扩散波纹动画计算
             animTick += 0.04f;
             float pulseR1 = dp(28) + (float)(Math.sin(animTick) * dp(6));
             float pulseR2 = dp(46) + (float)(Math.cos(animTick) * dp(8));
@@ -443,7 +504,6 @@ public class MainActivity extends Activity {
             float radarCx = dlgRect.centerX();
             float radarCy = dy + dp(78);
 
-            // 扩散双层呼吸光环
             paint.setStyle(Paint.Style.STROKE);
             paint.setColor(Color.parseColor("#2000A0E9"));
             paint.setStrokeWidth(dp(2f));
@@ -453,14 +513,12 @@ public class MainActivity extends Activity {
             paint.setStrokeWidth(dp(1.5f));
             canvas.drawCircle(radarCx, radarCy, pulseR1, paint);
 
-            // 中心天青冰蓝晶莹光珠
             paint.setStyle(Paint.Style.FILL);
             paint.setColor(Color.parseColor("#00A0E9"));
             canvas.drawCircle(radarCx, radarCy, dp(13), paint);
             paint.setColor(Color.WHITE);
             canvas.drawCircle(radarCx - dp(3.5f), radarCy - dp(3.5f), dp(4f), paint);
 
-            // 动态点号流转动画（正在连接设备. -> 正在连接设备.. -> 正在连接设备...）
             long now = System.currentTimeMillis();
             if (now - lastDotTime > 450) {
                 dotCount = (dotCount % 3) + 1;
@@ -476,7 +534,6 @@ public class MainActivity extends Activity {
                 displayText = scanStatus;
             }
 
-            // 核心动画主文本
             textPaint.setTextAlign(Paint.Align.CENTER);
             textPaint.setColor(Color.parseColor("#0F2840"));
             textPaint.setTextSize(sp(17));
@@ -488,7 +545,6 @@ public class MainActivity extends Activity {
             textPaint.setTypeface(Typeface.DEFAULT);
             canvas.drawText("请保持设备处于开启状态并靠近手机", radarCx, dy + dp(174), textPaint);
 
-            // 底部操作胶囊：【重新连接】与【进入中控】
             float btnW = (dw - dp(48)) / 2.0f;
             float btnY = dy + dh - dp(54);
 
@@ -508,7 +564,6 @@ public class MainActivity extends Activity {
             textPaint.setColor(Color.WHITE);
             canvas.drawText("直接进入", demoBtn.centerX(), demoBtn.centerY() + dp(4), textPaint);
 
-            // 驱动逐帧雷达波纹与点号平滑刷新
             postInvalidateOnAnimation();
         }
 
@@ -701,7 +756,6 @@ public class MainActivity extends Activity {
             float knobCx = w / 2.0f;
             float knobCy = dp(455);
 
-            // 1. 正在连接设备窗口交互
             if (isSearchingCooler) {
                 if (event.getAction() == MotionEvent.ACTION_DOWN) {
                     float dw = w - dp(48);
@@ -711,7 +765,6 @@ public class MainActivity extends Activity {
                     float btnW = (dw - dp(48)) / 2.0f;
                     float btnY = dy + dh - dp(54);
 
-                    // 点击“重新连接”
                     RectF retryBtn = new RectF(dx + dp(18), btnY, dx + dp(18) + btnW, btnY + dp(38));
                     if (retryBtn.contains(event.getX(), event.getY())) {
                         triggerHaptic(false);
@@ -721,20 +774,18 @@ public class MainActivity extends Activity {
                         return true;
                     }
 
-                    // 点击“直接进入”
                     RectF demoBtn = new RectF(dx + dp(30) + btnW, btnY, dx + dw - dp(18), btnY + dp(38));
                     if (demoBtn.contains(event.getX(), event.getY())) {
                         triggerHaptic(true);
                         connectedDeviceName = "COOLER UNIT";
                         isSearchingCooler = false;
-                        invalidate();
+                        postInvalidate();
                         return true;
                     }
                 }
                 return true;
             }
 
-            // 2. 震感调节窗口交互
             if (isHapticDialogVisible) {
                 if (event.getAction() == MotionEvent.ACTION_DOWN) {
                     float dw = w - dp(60);
@@ -744,7 +795,7 @@ public class MainActivity extends Activity {
 
                     if (event.getX() < dx || event.getX() > dx + dw || event.getY() < dy || event.getY() > dy + dh) {
                         isHapticDialogVisible = false;
-                        invalidate();
+                        postInvalidate();
                         return true;
                     }
 
@@ -752,7 +803,7 @@ public class MainActivity extends Activity {
                     if (closeBtn.contains(event.getX(), event.getY())) {
                         isHapticDialogVisible = false;
                         triggerHaptic(false);
-                        invalidate();
+                        postInvalidate();
                         return true;
                     }
 
@@ -766,7 +817,7 @@ public class MainActivity extends Activity {
                         if (itemRect.contains(event.getX(), event.getY())) {
                             hapticStrength = i;
                             triggerHaptic(false);
-                            invalidate();
+                            postInvalidate();
                             return true;
                         }
                     }
@@ -774,24 +825,21 @@ public class MainActivity extends Activity {
                 return true;
             }
 
-            // 3. 点击“触控阻尼胶囊”
             RectF capRect = new RectF(knobCx - dp(70), knobCy + dp(74), knobCx + dp(70), knobCy + dp(98));
             if (event.getAction() == MotionEvent.ACTION_DOWN && capRect.contains(event.getX(), event.getY())) {
                 isHapticDialogVisible = true;
                 triggerHaptic(false);
-                invalidate();
+                postInvalidate();
                 return true;
             }
 
-            // 4. 点击底部 RGB 开关
             if (event.getAction() == MotionEvent.ACTION_DOWN && event.getY() > h - dp(90)) {
                 isAmbientOn = !isAmbientOn;
                 triggerHaptic(false);
-                invalidate();
+                postInvalidate();
                 return true;
             }
 
-            // 5. 旋钮滑动选档
             float dx = event.getX() - knobCx;
             float dy = event.getY() - knobCy;
             if (Math.sqrt(dx * dx + dy * dy) <= dp(130)) {
@@ -815,7 +863,7 @@ public class MainActivity extends Activity {
                     triggerHaptic(currentLevel == 0 || currentLevel == 4);
                     int[] rpms = {0, 2500, 3800, 5400, 7200, 4200};
                     fanRpm = rpms[currentLevel];
-                    invalidate();
+                    postInvalidate();
                 }
                 return true;
             }
